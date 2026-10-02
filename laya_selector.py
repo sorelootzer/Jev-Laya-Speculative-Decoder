@@ -5,9 +5,9 @@ class LayaSelector:
 
     def __init__(
         self,
-        model_name="convaiinnovations/laya",
-        k=2,
-        branching_factor=2
+        k,
+        branching_factor=2,
+        model_name="convaiinnovations/laya"
     ):
         if not isinstance(k, int) or k < 1:
             raise ValueError("k must be a positive integer.")
