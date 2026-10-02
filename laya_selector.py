@@ -51,11 +51,11 @@ class LayaSelector:
                 "Laya received no drafts."
             )
 
-        if len(drafts) != self.expected_draft_count:
+        if len(drafts) > self.expected_draft_count:
             raise ValueError(
-                f"Expected {self.expected_draft_count} drafts "
-                f"for k={self.k}, branching_factor={self.branching_factor}, "
-                f"but received {len(drafts)}."
+                f"Received {len(drafts)} drafts, but at most "
+                f"{self.expected_draft_count} are possible for "
+                f"k={self.k}, branching_factor={self.branching_factor}."
             )
 
         required_fields = {
@@ -83,16 +83,26 @@ class LayaSelector:
                 draft["name"]
             )
 
-            if len(draft["token_ids"]) != self.k:
+            token_count = len(draft["token_ids"])
+
+            if token_count < 1 or token_count > self.k:
                 raise ValueError(
-                    f"Draft {name} contains {len(draft['token_ids'])} token IDs; "
-                    f"expected exactly k={self.k}."
+                    f"Draft {name} contains {token_count} token IDs; "
+                    f"expected between 1 and k={self.k}."
                 )
 
-            if len(name) != self.k:
+            if len(name) != token_count:
                 raise ValueError(
-                    f"Draft name {name!r} has length {len(name)}; "
-                    f"expected a {self.k}-level branch path."
+                    f"Draft name {name!r} has length {len(name)}, but "
+                    f"the draft contains {token_count} token IDs."
+                )
+
+            is_terminal = draft.get("is_terminal", False)
+
+            if token_count < self.k and not is_terminal:
+                raise ValueError(
+                    f"Draft {name!r} ends before k={self.k} but is not "
+                    "marked is_terminal=True."
                 )
 
             valid_branch_digits = {
@@ -428,6 +438,13 @@ class LayaSelector:
 
             "expected_draft_count":
                 self.expected_draft_count,
+
+            "terminal_draft_count":
+                sum(
+                    1
+                    for draft in drafts
+                    if draft.get("is_terminal", False)
+                ),
 
 
             # -----------------------------------------------
