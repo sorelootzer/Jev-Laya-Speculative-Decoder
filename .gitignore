@@ -1,5 +1,24 @@
+# Model weights
+models/
 *.gguf
+
+# Benchmark/generated outputs
 *.csv
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyd
+.venv/
+venv/
+env/
+
+# Secrets / local configuration
 .env
+.env.*
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
