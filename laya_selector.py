@@ -5,8 +5,19 @@ class LayaSelector:
 
     def __init__(
         self,
-        model_name="convaiinnovations/laya"
+        model_name="convaiinnovations/laya",
+        k=2,
+        branching_factor=2
     ):
+        if not isinstance(k, int) or k < 1:
+            raise ValueError("k must be a positive integer.")
+
+        if not isinstance(branching_factor, int) or branching_factor < 1:
+            raise ValueError("branching_factor must be a positive integer.")
+
+        self.k = k
+        self.branching_factor = branching_factor
+        self.expected_draft_count = branching_factor ** k
 
         print("Loading Laya...")
 
@@ -40,6 +51,13 @@ class LayaSelector:
                 "Laya received no drafts."
             )
 
+        if len(drafts) != self.expected_draft_count:
+            raise ValueError(
+                f"Expected {self.expected_draft_count} drafts "
+                f"for k={self.k}, branching_factor={self.branching_factor}, "
+                f"but received {len(drafts)}."
+            )
+
         required_fields = {
             "name",
             "token_ids",
@@ -64,6 +82,29 @@ class LayaSelector:
             name = str(
                 draft["name"]
             )
+
+            if len(draft["token_ids"]) != self.k:
+                raise ValueError(
+                    f"Draft {name} contains {len(draft['token_ids'])} token IDs; "
+                    f"expected exactly k={self.k}."
+                )
+
+            if len(name) != self.k:
+                raise ValueError(
+                    f"Draft name {name!r} has length {len(name)}; "
+                    f"expected a {self.k}-level branch path."
+                )
+
+            valid_branch_digits = {
+                str(i)
+                for i in range(1, self.branching_factor + 1)
+            }
+
+            if any(digit not in valid_branch_digits for digit in name):
+                raise ValueError(
+                    f"Draft name {name!r} contains a branch outside "
+                    f"1..{self.branching_factor}."
+                )
 
             if name in names:
                 raise ValueError(
@@ -108,17 +149,12 @@ class LayaSelector:
         drafts
     ):
         """
-        Convert Gemma's candidate drafts into one
+        Convert all Gemma candidate drafts into one
         Laya choice question.
 
-        Example:
-
-        {
-            "11": " plants use",
-            "12": " plants convert",
-            "21": " light energy",
-            "22": " organisms use"
-        }
+        Draft names are dynamic branch paths. For example,
+        k=2, b=2 produces 11, 12, 21, 22, while
+        k=3, b=2 produces 111 through 222.
         """
 
         criteria = {}
@@ -380,6 +416,18 @@ class LayaSelector:
 
             "selected_text":
                 selected_draft["text"],
+
+            "draft_length":
+                self.k,
+
+            "branching_factor":
+                self.branching_factor,
+
+            "draft_count":
+                len(drafts),
+
+            "expected_draft_count":
+                self.expected_draft_count,
 
 
             # -----------------------------------------------
