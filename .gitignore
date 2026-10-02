@@ -2,6 +2,9 @@
 models/
 *.gguf
 
+# Local dependency source checkouts
+laya-source/
+
 # Benchmark/generated outputs
 *.csv
 
