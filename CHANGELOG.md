@@ -4,15 +4,36 @@ Chronological development log for the JEV-Laya Speculative Decoder.
 
 ## TODO / Next Steps
 
-- Generalize the Gemma draft tree generator so `K` and branching factor `b` dynamically produce `b^k` candidate drafts.
-- Connect `gemma.py` to `LayaSelector.select()` in the live iterative generation loop.
-- Add Laya candidate probabilities, selection latency, confidence, and Gemma-Laya agreement to the decoder CSV.
-- Implement early `<end_of_turn>` detection in `gemma.py` so terminal branches are emitted as short terminal leaves and are not expanded further.
-- Replace repeated full-context branch evaluation with KV-cache reuse and/or batched branch evaluation.
+- Correct Gemma 4 turn termination using the actual multi-token `<start_end_turn/>` sequence, including matches that span decoding iterations.
+- Inspect and align the manually constructed chat prompt with the GGUF's actual Gemma 4 chat/control-token template.
+- Prevent control-token fragments from being treated as ordinary semantic alternatives by Laya.
+- Complete terminal-leaf integration so Laya can receive the full pruned set of valid leaves, including short terminal leaves.
+- Further optimize KV-cache/tree evaluation and investigate batching; the current decoder reuses a saved root prefix but still restores/evaluates speculative paths per node.
 - Benchmark normal Gemma decoding against the Laya-guided decoder.
 - Evaluate output quality alongside latency/throughput so selection improvements are not measured only by speed.
 
 ---
+
+## 2026-10-03 — Arbitrary-k Gemma Tree and Live Laya Integration
+
+### Added
+- Replaced the hard-coded two-level Gemma tree with a generic binary tree controlled by runtime draft length `k`.
+- Draft paths are now generated dynamically; for example, `k = 3` produces `111`, `112`, `121`, `122`, `211`, `212`, `221`, and `222`.
+- Connected `gemma.py` directly to `LayaSelector.select()` so Laya now chooses the continuation committed to Gemma's context.
+- Removed the fixed 100-token output ceiling; generation now relies on termination conditions and remaining context capacity.
+- Added dynamic per-candidate CSV rows, Laya probabilities/confidence, Gemma-Laya agreement, average log probability, and per-level Gemma timing.
+- Added saved root-state reuse so the persistent context is evaluated once per tree generation and speculative paths are evaluated from that state.
+- Added a development guard limiting the tree to 64 leaf drafts.
+
+### Tested
+- Successfully ran `k = 3` with eight candidate drafts.
+- In a Russia-capital test, Gemma strongly preferred `111: "The capital of"` while Laya selected `121: "The official capital"`; subsequent selections still produced the correct semantic answer, demonstrating that Laya can materially alter the decoding trajectory.
+- The observed `k = 3` run generated 23 tokens over 8 iterations with 55.386 s Gemma draft time, 7.480 s Laya decision time, 62.921 s end-to-end time, and 0.366 tokens/s effective throughput.
+
+### Issue identified
+- The GGUF's observed turn-ending text is `<start_end_turn/>`, tokenized as a seven-token sequence rather than one special token. The current single-token stop logic therefore does not recognize it reliably.
+- This allowed Laya to select competing control-token fragments after the semantic answer had completed, producing malformed trailing control text.
+- Gemma tree generation remains the dominant runtime cost; increasing `k` increases candidate coverage/lookahead but expands inference work exponentially.
 
 ## 2026-10-03 — Early Terminal Leaf Support in LayaSelector
 
