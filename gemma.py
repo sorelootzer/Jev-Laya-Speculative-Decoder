@@ -23,22 +23,32 @@ CSV_FILE = SCRIPT_DIR / "decoder_results.csv"
 
 
 # ============================================================
-# LOAD MODELS
+# MODEL STATE
 # ============================================================
 
-print("Loading Gemma...")
-load_start = time.perf_counter()
+llm = None
+MODEL_LOAD_TIME = 0.0
 
-llm = Llama(
-    model_path=str(MODEL_PATH),
-    n_ctx=N_CTX,
-    logits_all=True,
-    n_gpu_layers=0,
-    verbose=False,
-)
 
-MODEL_LOAD_TIME = time.perf_counter() - load_start
-print(f"Gemma loaded in {MODEL_LOAD_TIME:.3f} s")
+def load_gemma():
+    global llm, MODEL_LOAD_TIME
+
+    if llm is not None:
+        return
+
+    print("Loading Gemma...")
+    load_start = time.perf_counter()
+
+    llm = Llama(
+        model_path=str(MODEL_PATH),
+        n_ctx=N_CTX,
+        logits_all=True,
+        n_gpu_layers=0,
+        verbose=False,
+    )
+
+    MODEL_LOAD_TIME = time.perf_counter() - load_start
+    print(f"Gemma loaded in {MODEL_LOAD_TIME:.3f} s")
 
 
 # ============================================================
@@ -597,8 +607,11 @@ def read_k():
 
 
 def main():
-    user_prompt = input("\nEnter prompt: ")
     k = read_k()
+    user_prompt = input("\nEnter prompt: ")
+
+    # Ask for all runtime configuration before loading either model.
+    load_gemma()
 
     final_response, history, metrics = generate_response(user_prompt, k)
     save_history(user_prompt, final_response, history, metrics)
