@@ -7,12 +7,25 @@ Chronological development log for the JEV-Laya Speculative Decoder.
 - Generalize the Gemma draft tree generator so `K` and branching factor `b` dynamically produce `b^k` candidate drafts.
 - Connect `gemma.py` to `LayaSelector.select()` in the live iterative generation loop.
 - Add Laya candidate probabilities, selection latency, confidence, and Gemma-Laya agreement to the decoder CSV.
-- Improve early `<end_of_turn>` detection so terminal branches do not trigger unnecessary deeper inference.
+- Implement early `<end_of_turn>` detection in `gemma.py` so terminal branches are emitted as short terminal leaves and are not expanded further.
 - Replace repeated full-context branch evaluation with KV-cache reuse and/or batched branch evaluation.
 - Benchmark normal Gemma decoding against the Laya-guided decoder.
 - Evaluate output quality alongside latency/throughput so selection improvements are not measured only by speed.
 
 ---
+
+## 2026-10-03 — Early Terminal Leaf Support in LayaSelector
+
+### Changed
+- Relaxed the selector contract from exactly `b^k` full-length drafts to at most `b^k` valid leaf drafts.
+- Full non-terminal drafts must still contain exactly `k` tokens.
+- Drafts may contain fewer than `k` tokens only when explicitly marked `is_terminal=True`.
+- Draft names are validated against the actual number of tokens in each leaf, allowing terminal paths such as `12` in a `k = 3` tree.
+- Added `terminal_draft_count` to Laya selection metadata.
+
+### Why
+- A branch that reaches EOS or `<end_of_turn>` should become a leaf immediately rather than performing meaningless inference to force it to depth `k`.
+- Laya can now choose among the actual valid leaves produced by a pruned speculative tree.
 
 ## 2026-10-03 — Variable Draft Support in LayaSelector
 
