@@ -14,6 +14,18 @@ Chronological development log for the JEV-Laya Speculative Decoder.
 
 ---
 
+## 2026-10-03 — Single-source Runtime Draft Configuration
+
+### Changed
+- Removed the default `k = 2` from `LayaSelector`; draft length must now be supplied explicitly by the caller.
+- `gemma.py` is the single source of truth for runtime draft length and passes the selected `k` directly to Laya.
+- Moved Gemma model loading out of module initialization and into `load_gemma()`.
+- Runtime draft length and the user prompt are now collected before either Gemma or Laya is loaded.
+
+### Why
+- Prevents Gemma and Laya from silently operating with different draft lengths.
+- Avoids loading large models before the run configuration and prompt have been supplied.
+
 ## 2026-10-03 — Arbitrary-k Gemma Tree and Live Laya Integration
 
 ### Added
