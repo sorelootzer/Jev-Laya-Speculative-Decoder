@@ -1,0 +1,5 @@
+*.gguf
+*.csv
+__pycache__/
+*.pyc
+.env
