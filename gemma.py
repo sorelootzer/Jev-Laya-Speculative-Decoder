@@ -1,62 +1,44 @@
 from llama_cpp import Llama
-import numpy as np
-import time
+from laya_selector import LayaSelector
 import csv
+import json
+import math
+import time
 from pathlib import Path
+
+import numpy as np
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-MODEL_PATH = (
-    r"C:\Users\lootz\Models\Gemma4"
-    r"\gemma-4-E4B-it-Q4_K_M.gguf"
-)
-
-# Draft configuration
-K = 2
-BRANCHES = 2
-
-# Development failsafe.
-# This is NOT the speculative draft length.
-MAX_OUTPUT_TOKENS = 100
-
 SCRIPT_DIR = Path(__file__).parent
+MODEL_PATH = Path(r"C:\Users\lootz\Models\Gemma4\gemma-4-E4B-it-Q4_K_M.gguf")
+
+N_CTX = 2048
+DEFAULT_K = 2
+BRANCHES = 2
 CSV_FILE = SCRIPT_DIR / "decoder_results.csv"
 
 
 # ============================================================
-# LOAD GEMMA
+# LOAD MODELS
 # ============================================================
 
 print("Loading Gemma...")
-
 load_start = time.perf_counter()
 
 llm = Llama(
-    model_path=MODEL_PATH,
-
-    # More than enough for development/testing.
-    n_ctx=2048,
-
-    # Required for direct access to logits.
+    model_path=str(MODEL_PATH),
+    n_ctx=N_CTX,
     logits_all=True,
-
-    # CPU inference
     n_gpu_layers=0,
-
     verbose=False,
 )
 
-load_end = time.perf_counter()
-
-MODEL_LOAD_TIME = load_end - load_start
-
-print(
-    f"Model loaded in "
-    f"{MODEL_LOAD_TIME:.3f} s"
-)
+MODEL_LOAD_TIME = time.perf_counter() - load_start
+print(f"Gemma loaded in {MODEL_LOAD_TIME:.3f} s")
 
 
 # ============================================================
@@ -64,95 +46,35 @@ print(
 # ============================================================
 
 def softmax(logits):
-    """
-    Convert raw logits into probabilities.
-    """
-
     shifted = logits - np.max(logits)
-
     exp_logits = np.exp(shifted)
-
     return exp_logits / np.sum(exp_logits)
 
 
-def top_tokens(logits, n=2):
-    """
-    Extract the top-n candidate tokens from a logit vector.
-
-    Returns:
-        [
-            {
-                "id": ...,
-                "text": ...,
-                "logit": ...,
-                "probability": ...
-            },
-            ...
-        ]
-    """
-
+def top_tokens(logits, n=BRANCHES):
     probabilities = softmax(logits)
+    indices = np.argpartition(probabilities, -n)[-n:]
+    indices = indices[np.argsort(probabilities[indices])[::-1]]
 
-    # Find top n without sorting the entire vocabulary.
-    indices = np.argpartition(
-        probabilities,
-        -n
-    )[-n:]
-
-    # Sort the selected candidates highest -> lowest.
-    indices = indices[
-        np.argsort(
-            probabilities[indices]
-        )[::-1]
-    ]
-
-    results = []
-
+    candidates = []
     for token_id in indices:
-
         token_id = int(token_id)
-
-        token_text = llm.detokenize(
-            [token_id]
-        ).decode(
-            "utf-8",
-            errors="replace"
-        )
-
-        results.append({
+        text = llm.detokenize([token_id]).decode("utf-8", errors="replace")
+        candidates.append({
             "id": token_id,
-
-            "text": token_text,
-
-            "logit": float(
-                logits[token_id]
-            ),
-
-            "probability": float(
-                probabilities[token_id]
-            )
+            "text": text,
+            "logit": float(logits[token_id]),
+            "probability": float(probabilities[token_id]),
         })
 
-    return results
+    return candidates
 
 
 # ============================================================
-# GEMMA CHAT FORMAT
+# CHAT / STOP TOKENS
 # ============================================================
 
 def create_chat_context(user_prompt):
-    """
-    Format the user's input as a Gemma conversation.
-
-    Result conceptually:
-
-        <start_of_turn>user
-        USER PROMPT<end_of_turn>
-        <start_of_turn>model
-
-    Generation then begins after the model turn marker.
-    """
-
     formatted_prompt = (
         "<start_of_turn>user\n"
         + user_prompt
@@ -160,52 +82,24 @@ def create_chat_context(user_prompt):
         + "<start_of_turn>model\n"
     )
 
-    context_tokens = llm.tokenize(
+    tokens = llm.tokenize(
         formatted_prompt.encode("utf-8"),
-
-        # Add beginning-of-sequence token.
         add_bos=True,
-
-        # Critical:
-        # recognise Gemma control tokens as special tokens.
-        special=True
+        special=True,
     )
 
-    return formatted_prompt, context_tokens
+    return formatted_prompt, tokens
 
-
-# ============================================================
-# STOP TOKENS
-# ============================================================
 
 def get_stop_token_ids():
-    """
-    Find known termination tokens recognised by this tokenizer.
-
-    EOS is always included.
-
-    We also attempt to identify Gemma's end-of-turn token.
-    """
-
-    stop_ids = {
-        llm.token_eos()
-    }
-
+    stop_ids = {llm.token_eos()}
     possible_stop_tokens = [
-        b"<end_of_turn>",
-        b"<eos>",
+        
+    b"<start_end_turn/>",
+    b"<eos>",
     ]
-
-    for token_text in possible_stop_tokens:
-
-        ids = llm.tokenize(
-            token_text,
-            add_bos=False,
-            special=True
-        )
-
-        # Only consider it a special termination token
-        # if the tokenizer represents it as ONE token.
+    for token_text in (b"<end_of_turn>", b"<eos>"):
+        ids = llm.tokenize(token_text, add_bos=False, special=True)
         if len(ids) == 1:
             stop_ids.add(ids[0])
 
@@ -214,1075 +108,500 @@ def get_stop_token_ids():
 
 STOP_TOKEN_IDS = get_stop_token_ids()
 
-print(
-    "Stop token IDs:",
-    STOP_TOKEN_IDS
+print("\n========== STOP TOKEN DIAGNOSTIC ==========")
+
+# Normal EOS
+print("EOS token ID:", llm.token_eos())
+
+# How this tokenizer represents <end_of_turn>
+eot_tokens = llm.tokenize(
+    b"<start_end_turn/>",
+    add_bos=False,
+    special=True
 )
 
+print("<end_of_turn> token IDs:", eot_tokens)
 
-# ============================================================
-# EMPTY-DRAFT CHECKS
-# ============================================================
+print("\nIndividual token decoding:")
 
-def is_empty_draft(draft):
-    """
-    True when a selected draft has no visible output.
-    """
-
-    text = draft.get(
-        "text",
-        ""
-    )
-
-    if text is None:
-        return True
-
-    return text.strip() == ""
-
-
-def all_drafts_empty(drafts):
-    """
-    True when every candidate draft contains
-    no visible output.
-    """
-
-    for draft in drafts:
-
-        text = draft.get(
-            "text",
-            ""
-        )
-
-        if text and text.strip():
-            return False
-
-    return True
-
-
-# ============================================================
-# GENERATE k=2, b=2 TOKEN TREE
-# ============================================================
-
-def generate_drafts(context_tokens):
-    """
-    Generate:
-
-                        context
-                           |
-                    ----------------
-                    |              |
-                   T1              T2
-                  /  \\            /  \\
-                T11 T12         T21 T22
-
-
-    Produces exactly four two-token drafts:
-
-        11
-        12
-        21
-        22
-    """
-
-    generation_start = time.perf_counter()
-
-
-    # ========================================================
-    # LEVEL 1
-    # ========================================================
-
-    level1_start = time.perf_counter()
-
-    llm.reset()
-
-    llm.eval(
-        context_tokens
-    )
-
-    # Last evaluated position predicts the NEXT token.
-    level1_logits = llm.scores[
-        llm.n_tokens - 1
-    ].copy()
-
-    first_candidates = top_tokens(
-        level1_logits,
-        BRANCHES
-    )
-
-    level1_end = time.perf_counter()
-
-
-    # ========================================================
-    # LEVEL 2
-    # ========================================================
-
-    level2_start = time.perf_counter()
-
-    drafts = []
-
-    for first_index, first in enumerate(
-        first_candidates,
-        start=1
-    ):
-
-        # ----------------------------------------------------
-        # Evaluate:
-        #
-        # context + T1
-        #
-        # and separately:
-        #
-        # context + T2
-        #
-        # ----------------------------------------------------
-
-        llm.reset()
-
-        branch_context = (
-            context_tokens
-            + [first["id"]]
-        )
-
-        llm.eval(
-            branch_context
-        )
-
-        second_logits = llm.scores[
-            llm.n_tokens - 1
-        ].copy()
-
-        second_candidates = top_tokens(
-            second_logits,
-            BRANCHES
-        )
-
-        # ----------------------------------------------------
-        # Construct:
-        #
-        # T11 / T12
-        #
-        # or:
-        #
-        # T21 / T22
-        # ----------------------------------------------------
-
-        for second_index, second in enumerate(
-            second_candidates,
-            start=1
-        ):
-
-            draft_name = (
-                f"{first_index}"
-                f"{second_index}"
-            )
-
-            token_ids = [
-                first["id"],
-                second["id"]
-            ]
-
-            draft_text = llm.detokenize(
-                token_ids
-            ).decode(
-                "utf-8",
-                errors="replace"
-            )
-
-            # ------------------------------------------------
-            # Joint probability
-            #
-            # P(T1,T11)
-            #
-            # =
-            #
-            # P(T1 | context)
-            #
-            # *
-            #
-            # P(T11 | context,T1)
-            # ------------------------------------------------
-
-            joint_probability = (
-                first["probability"]
-                *
-                second["probability"]
-            )
-
-            # Log probability is numerically preferable
-            # when sequence lengths increase.
-            joint_log_probability = (
-                np.log(
-                    max(
-                        first["probability"],
-                        1e-45
-                    )
-                )
-                +
-                np.log(
-                    max(
-                        second["probability"],
-                        1e-45
-                    )
-                )
-            )
-
-            drafts.append({
-
-                "name":
-                    draft_name,
-
-                "token_ids":
-                    token_ids,
-
-                "tokens": [
-                    first["text"],
-                    second["text"]
-                ],
-
-                "text":
-                    draft_text,
-
-                # First token information
-                "token_1_id":
-                    first["id"],
-
-                "token_1_text":
-                    first["text"],
-
-                "token_1_logit":
-                    first["logit"],
-
-                "first_probability":
-                    first["probability"],
-
-                # Second token information
-                "token_2_id":
-                    second["id"],
-
-                "token_2_text":
-                    second["text"],
-
-                "token_2_logit":
-                    second["logit"],
-
-                "second_probability":
-                    second["probability"],
-
-                # Complete draft probability
-                "joint_probability":
-                    joint_probability,
-
-                "joint_log_probability":
-                    joint_log_probability
-            })
-
-
-    level2_end = time.perf_counter()
-
-    generation_end = time.perf_counter()
-
-
-    # ========================================================
-    # GENERATION METRICS
-    # ========================================================
-
-    metrics = {
-
-        "level1_seconds":
-            level1_end
-            - level1_start,
-
-        "level2_seconds":
-            level2_end
-            - level2_start,
-
-        "total_seconds":
-            generation_end
-            - generation_start
-    }
-
-    return drafts, metrics
-
-
-# ============================================================
-# DRAFT SELECTOR
-# ============================================================
-
-def select_draft(
-    context_tokens,
-    drafts
-):
-    """
-    TEMPORARY SELECTOR.
-
-    For now:
-        choose Gemma's highest joint-probability draft.
-
-    Later:
-        replace the contents of THIS FUNCTION with Laya.
-
-    The rest of the decoder does not need to change.
-    """
-
-    selector_start = time.perf_counter()
-
-    selected = max(
-        drafts,
-
-        key=lambda draft:
-            draft[
-                "joint_log_probability"
-            ]
-    )
-
-    selector_end = time.perf_counter()
-
-    selector_time = (
-        selector_end
-        - selector_start
-    )
-
-    return (
-        selected,
-        selector_time
-    )
-
-
-# ============================================================
-# DISPLAY CANDIDATE DRAFTS
-# ============================================================
-
-def print_drafts(drafts):
-
-    ranked = sorted(
-        drafts,
-
-        key=lambda draft:
-            draft[
-                "joint_log_probability"
-            ],
-
-        reverse=True
-    )
-
-    print(
-        "\nCandidate drafts:"
-    )
-
-    for draft in ranked:
-
-        print(
-            f"  {draft['name']} | "
-            f"{repr(draft['text'])} | "
-            f"P={draft['joint_probability']:.6f}"
-        )
-
-
-# ============================================================
-# COMMIT SELECTED DRAFT
-# ============================================================
-
-def commit_selected_draft(
-    selected,
-    context_tokens,
-    generated_tokens
-):
-    """
-    Append selected tokens directly to the context.
-
-    IMPORTANT:
-
-    We append TOKEN IDs.
-
-    We do NOT:
-
-        token IDs
-            ->
-        text
-            ->
-        tokenizer
-            ->
-        token IDs
-
-    This preserves Gemma's exact token sequence.
-
-    If a stop token occurs inside the k=2 draft,
-    only tokens BEFORE that stop token are committed.
-    """
-
-    should_stop = False
-
-    committed_tokens = []
-
-    for token_id in selected[
-        "token_ids"
-    ]:
-
-        if token_id in STOP_TOKEN_IDS:
-
-            should_stop = True
-
-            break
-
-        context_tokens.append(
-            token_id
-        )
-
-        generated_tokens.append(
-            token_id
-        )
-
-        committed_tokens.append(
-            token_id
-        )
-
-    return (
-        committed_tokens,
-        should_stop
-    )
-
-
-# ============================================================
-# MAIN ITERATIVE DECODER
-# ============================================================
-
-def generate_response(user_prompt):
-
-    total_start = time.perf_counter()
-
-
-    # ========================================================
-    # CREATE INITIAL CHAT CONTEXT
-    # ========================================================
-
-    (
-        formatted_prompt,
-        context_tokens
-    ) = create_chat_context(
-        user_prompt
-    )
-
-    initial_context_tokens = len(
-        context_tokens
-    )
-
-    generated_tokens = []
-
-    history = []
-
-    iteration = 0
-
-    total_gemma_time = 0.0
-
-    total_selector_time = 0.0
-
-
-    # ========================================================
-    # DISPLAY INPUT
-    # ========================================================
-
-    print(
-        "\n========================================"
-    )
-
-    print(
-        "USER"
-    )
-
-    print(
-        "========================================"
-    )
-
-    print(
-        user_prompt
-    )
-
-    print(
-        "\n========================================"
-    )
-
-    print(
-        "ASSISTANT"
-    )
-
-    print(
-        "========================================\n"
-    )
-
-
-    # ========================================================
-    # GENERATION LOOP
-    # ========================================================
-
-    try:
-
-        while (
-            len(generated_tokens)
-            < MAX_OUTPUT_TOKENS
-        ):
-
-            iteration += 1
-
-
-            # =================================================
-            # GEMMA DRAFT GENERATION
-            # =================================================
-
-            drafts, gemma_metrics = (
-                generate_drafts(
-                    context_tokens
-                )
-            )
-
-            total_gemma_time += (
-                gemma_metrics[
-                    "total_seconds"
-                ]
-            )
-
-
-            print(
-                f"\n--- Iteration "
-                f"{iteration} ---"
-            )
-
-            print_drafts(
-                drafts
-            )
-
-
-            # =================================================
-            # TERMINATION CHECK 1:
-            # ALL DRAFTS EMPTY
-            # =================================================
-
-            if all_drafts_empty(
-                drafts
-            ):
-
-                print(
-                    "\nAll candidate drafts "
-                    "are empty."
-                )
-
-                print(
-                    "Ending generation."
-                )
-
-                break
-
-
-            # =================================================
-            # SELECT DRAFT
-            # =================================================
-
-            (
-                selected,
-                selector_time
-            ) = select_draft(
-                context_tokens,
-                drafts
-            )
-
-            total_selector_time += (
-                selector_time
-            )
-
-
-            # =================================================
-            # TERMINATION CHECK 2:
-            # SELECTED DRAFT EMPTY
-            # =================================================
-
-            if is_empty_draft(
-                selected
-            ):
-
-                print(
-                    "\nSelected draft contains "
-                    "no visible output."
-                )
-
-                print(
-                    "Ending generation."
-                )
-
-                break
-
-
-            # =================================================
-            # DISPLAY SELECTED DRAFT
-            # =================================================
-
-            print(
-                f"\nSelected: "
-                f"{selected['name']} "
-                f"{repr(selected['text'])}"
-            )
-
-
-            # =================================================
-            # FIND GEMMA'S RANKING
-            # =================================================
-
-            ranked = sorted(
-                drafts,
-
-                key=lambda draft:
-                    draft[
-                        "joint_log_probability"
-                    ],
-
-                reverse=True
-            )
-
-            gemma_best = ranked[0]
-
-
-            # =================================================
-            # SAVE ITERATION HISTORY
-            # =================================================
-
-            history.append({
-
-                "iteration":
-                    iteration,
-
-                # ---------------------------------------------
-                # Candidate drafts
-                # ---------------------------------------------
-
-                "draft_11":
-                    next(
-                        d["text"]
-                        for d in drafts
-                        if d["name"] == "11"
-                    ),
-
-                "draft_12":
-                    next(
-                        d["text"]
-                        for d in drafts
-                        if d["name"] == "12"
-                    ),
-
-                "draft_21":
-                    next(
-                        d["text"]
-                        for d in drafts
-                        if d["name"] == "21"
-                    ),
-
-                "draft_22":
-                    next(
-                        d["text"]
-                        for d in drafts
-                        if d["name"] == "22"
-                    ),
-
-                # ---------------------------------------------
-                # Gemma's preferred draft
-                # ---------------------------------------------
-
-                "gemma_best_draft":
-                    gemma_best[
-                        "name"
-                    ],
-
-                "gemma_best_text":
-                    gemma_best[
-                        "text"
-                    ],
-
-                # ---------------------------------------------
-                # Selector result
-                # ---------------------------------------------
-
-                "selected_draft":
-                    selected[
-                        "name"
-                    ],
-
-                "selected_text":
-                    selected[
-                        "text"
-                    ],
-
-                "selected_probability":
-                    selected[
-                        "joint_probability"
-                    ],
-
-                # ---------------------------------------------
-                # Performance
-                # ---------------------------------------------
-
-                "gemma_level1_seconds":
-                    gemma_metrics[
-                        "level1_seconds"
-                    ],
-
-                "gemma_level2_seconds":
-                    gemma_metrics[
-                        "level2_seconds"
-                    ],
-
-                "gemma_total_seconds":
-                    gemma_metrics[
-                        "total_seconds"
-                    ],
-
-                "selector_seconds":
-                    selector_time
-            })
-
-
-            # =================================================
-            # COMMIT SELECTED TOKENS
-            # =================================================
-
-            (
-                committed,
-                should_stop
-            ) = commit_selected_draft(
-                selected,
-                context_tokens,
-                generated_tokens
-            )
-
-
-            # =================================================
-            # STOP TOKEN GENERATED
-            # =================================================
-
-            if should_stop:
-
-                print(
-                    "\nGemma generated a "
-                    "termination token."
-                )
-
-                print(
-                    "Ending generation."
-                )
-
-                break
-
-
-            # =================================================
-            # ADDITIONAL FAILSAFE:
-            #
-            # If somehow no tokens were committed,
-            # continuing would cause an infinite loop.
-            # =================================================
-
-            if len(committed) == 0:
-
-                print(
-                    "\nNo tokens were committed."
-                )
-
-                print(
-                    "Ending generation to prevent "
-                    "an infinite loop."
-                )
-
-                break
-
-
-    # ========================================================
-    # CTRL+C
-    # ========================================================
-
-    except KeyboardInterrupt:
-
-        print(
-            "\n\nGeneration interrupted "
-            "by user."
-        )
-
-
-    # ========================================================
-    # DECODE FINAL RESPONSE
-    # ========================================================
-
-    final_response = llm.detokenize(
-        generated_tokens
+for token_id in eot_tokens:
+    decoded = llm.detokenize(
+        [token_id]
     ).decode(
         "utf-8",
         errors="replace"
     )
 
-
-    total_end = time.perf_counter()
-
-    total_time = (
-        total_end
-        - total_start
+    print(
+        f"ID {token_id}: {repr(decoded)}"
     )
 
-    output_token_count = len(
-        generated_tokens
-    )
+# Verify the entire sequence decodes correctly
+full_decoded = llm.detokenize(
+    eot_tokens
+).decode(
+    "utf-8",
+    errors="replace"
+)
 
+print(
+    "\nFull sequence:",
+    repr(full_decoded)
+)
 
-    # ========================================================
-    # EFFECTIVE THROUGHPUT
-    # ========================================================
+print(
+    "\nDetected single-token stop IDs:",
+    STOP_TOKEN_IDS
+)
 
-    if total_time > 0:
+print("===========================================\n")
 
-        effective_tokens_per_second = (
-            output_token_count
-            /
-            total_time
+# ============================================================
+# GENERIC TOKEN TREE
+# ============================================================
+
+def generate_drafts(context_tokens, k, branching_factor=BRANCHES):
+    """
+    Generate a b^k candidate tree while evaluating the persistent context once.
+
+    The root context is evaluated once and saved. Each tree node restores that
+    root state and evaluates only its speculative path before reading logits.
+    This avoids re-evaluating the full prompt/accepted response for every node.
+
+    Terminal paths are not expanded further. They are returned as terminal
+    candidates and may contain fewer than k visible tokens.
+    """
+
+    if k < 1:
+        raise ValueError("k must be at least 1")
+    if branching_factor < 1:
+        raise ValueError("branching_factor must be at least 1")
+    if len(context_tokens) + k > N_CTX:
+        raise RuntimeError(
+            f"Insufficient context capacity: {len(context_tokens)} used, "
+            f"k={k}, n_ctx={N_CTX}."
         )
 
-    else:
+    generation_start = time.perf_counter()
+    level_times = [0.0 for _ in range(k)]
+    node_counts = [0 for _ in range(k)]
 
-        effective_tokens_per_second = 0.0
+    # Evaluate persistent prefix once.
+    prefix_start = time.perf_counter()
+    llm.reset()
+    llm.eval(context_tokens)
+    root_state = llm.save_state()
+    prefix_seconds = time.perf_counter() - prefix_start
 
+    leaves = []
 
-    # ========================================================
-    # FINAL OUTPUT
-    # ========================================================
+    # Node representation:
+    # path = branch-name string, e.g. "121"
+    # token_ids / token records are the speculative path from the root.
+    frontier = [{
+        "name": "",
+        "token_ids": [],
+        "tokens": [],
+        "joint_log_probability": 0.0,
+        "terminal": False,
+    }]
 
-    print(
-        "\n\n========================================"
-    )
+    for depth in range(k):
+        level_start = time.perf_counter()
+        next_frontier = []
 
-    print(
-        "FINAL RESPONSE"
-    )
+        for node in frontier:
+            if node["terminal"]:
+                leaves.append(node)
+                continue
 
-    print(
-        "========================================"
-    )
+            llm.load_state(root_state)
 
-    print(
-        final_response
-    )
+            if node["token_ids"]:
+                llm.eval(node["token_ids"])
 
+            logits = llm.scores[llm.n_tokens - 1].copy()
+            candidates = top_tokens(logits, branching_factor)
+            node_counts[depth] += 1
 
-    # ========================================================
-    # METRICS
-    # ========================================================
+            for branch_index, candidate in enumerate(candidates, start=1):
+                child_token_ids = node["token_ids"] + [candidate["id"]]
+                child_tokens = node["tokens"] + [candidate]
+                child_name = node["name"] + str(branch_index)
+                child_log_probability = (
+                    node["joint_log_probability"]
+                    + math.log(max(candidate["probability"], 1e-45))
+                )
+                terminal = candidate["id"] in STOP_TOKEN_IDS
 
-    print(
-        "\n========================================"
-    )
+                child = {
+                    "name": child_name,
+                    "token_ids": child_token_ids,
+                    "tokens": child_tokens,
+                    "joint_log_probability": child_log_probability,
+                    "terminal": terminal,
+                }
 
-    print(
-        "METRICS"
-    )
+                if terminal or depth == k - 1:
+                    leaves.append(child)
+                else:
+                    next_frontier.append(child)
 
-    print(
-        "========================================"
-    )
+        level_times[depth] = time.perf_counter() - level_start
+        frontier = next_frontier
 
-    print(
-        f"Model load:             "
-        f"{MODEL_LOAD_TIME:.3f} s"
-    )
+        if not frontier:
+            break
 
-    print(
-        f"Iterations:             "
-        f"{iteration}"
-    )
+    drafts = []
 
-    print(
-        f"Generated tokens:       "
-        f"{output_token_count}"
-    )
+    for leaf in leaves:
+        text = llm.detokenize(leaf["token_ids"]).decode(
+            "utf-8", errors="replace"
+        )
 
-    print(
-        f"Selector calls:         "
-        f"{len(history)}"
-    )
+        drafts.append({
+            "name": leaf["name"],
+            "token_ids": leaf["token_ids"],
+            "tokens": leaf["tokens"],
+            "text": text,
+            "joint_probability": math.exp(leaf["joint_log_probability"]),
+            "joint_log_probability": leaf["joint_log_probability"],
+            "average_log_probability": (
+                leaf["joint_log_probability"] / len(leaf["token_ids"])
+            ),
+            "terminal": leaf["terminal"],
+            "draft_length": len(leaf["token_ids"]),
+        })
 
-    print(
-        f"Gemma draft time:       "
-        f"{total_gemma_time:.3f} s"
-    )
-
-    print(
-        f"Selector time:          "
-        f"{total_selector_time:.6f} s"
-    )
-
-    print(
-        f"End-to-end time:        "
-        f"{total_time:.3f} s"
-    )
-
-    print(
-        f"Effective throughput:   "
-        f"{effective_tokens_per_second:.3f} "
-        f"tokens/s"
-    )
-
-    print(
-        "========================================"
-    )
-
-
-    # ========================================================
-    # RETURN RESULTS
-    # ========================================================
-
-    metrics = {
-
-        "iterations":
-            iteration,
-
-        "generated_tokens":
-            output_token_count,
-
-        "gemma_seconds":
-            total_gemma_time,
-
-        "selector_seconds":
-            total_selector_time,
-
-        "total_seconds":
-            total_time,
-
-        "tokens_per_second":
-            effective_tokens_per_second,
-
-        "initial_context_tokens":
-            initial_context_tokens
+    return drafts, {
+        "prefix_seconds": prefix_seconds,
+        "level_seconds": level_times,
+        "node_counts": node_counts,
+        "total_seconds": time.perf_counter() - generation_start,
+        "draft_count": len(drafts),
     }
 
-    return (
-        final_response,
-        history,
-        metrics
+
+# ============================================================
+# DISPLAY / COMMIT
+# ============================================================
+
+def print_drafts(drafts):
+    ranked = sorted(
+        drafts,
+        key=lambda draft: draft["joint_log_probability"],
+        reverse=True,
     )
 
-
-# ============================================================
-# SAVE ITERATION HISTORY TO CSV
-# ============================================================
-
-def save_history(
-    user_prompt,
-    final_response,
-    history,
-    metrics
-):
-
-    fieldnames = [
-
-        "prompt",
-
-        "final_response",
-
-        "iteration",
-
-        "draft_11",
-        "draft_12",
-        "draft_21",
-        "draft_22",
-
-        "gemma_best_draft",
-        "gemma_best_text",
-
-        "selected_draft",
-        "selected_text",
-        "selected_probability",
-
-        "gemma_level1_seconds",
-        "gemma_level2_seconds",
-        "gemma_total_seconds",
-
-        "selector_seconds",
-
-        "total_generated_tokens",
-
-        "total_end_to_end_seconds",
-
-        "effective_tokens_per_second"
-    ]
-
-
-    with open(
-        CSV_FILE,
-        "w",
-        newline="",
-        encoding="utf-8"
-    ) as file:
-
-        writer = csv.DictWriter(
-            file,
-            fieldnames=fieldnames
+    print("\nCandidate drafts:")
+    for draft in ranked:
+        terminal = " [STOP]" if draft["terminal"] else ""
+        print(
+            f"  {draft['name']} | {repr(draft['text'])} | "
+            f"P={draft['joint_probability']:.6f}{terminal}"
         )
 
-        writer.writeheader()
+
+def commit_selected_draft(selected, context_tokens, generated_tokens):
+    committed = []
+
+    for token_id in selected["token_ids"]:
+        if token_id in STOP_TOKEN_IDS:
+            return committed, True
+
+        context_tokens.append(token_id)
+        generated_tokens.append(token_id)
+        committed.append(token_id)
+
+    return committed, bool(selected.get("terminal", False))
 
 
-        for row in history:
+# ============================================================
+# ITERATIVE DECODER
+# ============================================================
 
-            writer.writerow({
+def generate_response(user_prompt, k):
+    if k < 1:
+        raise ValueError("k must be at least 1")
 
-                "prompt":
-                    user_prompt,
+    selector = LayaSelector(k=k, branching_factor=BRANCHES)
 
-                "final_response":
-                    final_response,
+    total_start = time.perf_counter()
+    _, context_tokens = create_chat_context(user_prompt)
+    initial_context_tokens = len(context_tokens)
+    generated_tokens = []
+    history = []
+    iteration = 0
+    total_gemma_time = 0.0
+    total_laya_time = 0.0
 
-                **row,
+    print("\n========================================")
+    print("USER")
+    print("========================================")
+    print(user_prompt)
+    print("\n========================================")
+    print("ASSISTANT")
+    print("========================================")
 
-                "total_generated_tokens":
-                    metrics[
-                        "generated_tokens"
-                    ],
+    try:
+        while True:
+            # Natural hard ceiling: enough room must remain for a k-token draft.
+            if len(context_tokens) + k > N_CTX:
+                print("\nContext window exhausted. Ending generation.")
+                break
 
-                "total_end_to_end_seconds":
-                    metrics[
-                        "total_seconds"
-                    ],
+            iteration += 1
 
-                "effective_tokens_per_second":
-                    metrics[
-                        "tokens_per_second"
-                    ]
+            drafts, gemma_metrics = generate_drafts(
+                context_tokens=context_tokens,
+                k=k,
+                branching_factor=BRANCHES,
+            )
+            total_gemma_time += gemma_metrics["total_seconds"]
+
+            if not drafts:
+                print("\nNo candidate drafts produced. Ending generation.")
+                break
+
+            print(f"\n--- Iteration {iteration} ---")
+            print_drafts(drafts)
+
+            # If the highest-probability first-step continuation is already a
+            # terminal candidate, avoid forcing Laya to choose among paths that
+            # conceptually continue after the model has ended its turn.
+            terminal_drafts = [d for d in drafts if d["terminal"]]
+
+            current_response = llm.detokenize(generated_tokens).decode(
+                "utf-8", errors="replace"
+            )
+
+            # LayaSelector currently requires exactly b^k full-length drafts.
+            # Until it accepts early-terminal paths, use Laya only when the tree
+            # is complete. A terminal-only tree ends immediately.
+            full_length_drafts = [d for d in drafts if len(d["token_ids"]) == k]
+
+            if not full_length_drafts and terminal_drafts:
+                selected = max(
+                    terminal_drafts,
+                    key=lambda d: d["joint_log_probability"],
+                )
+                laya_metadata = {
+                    "decision_seconds": 0.0,
+                    "selected_name": selected["name"],
+                    "probabilities": {},
+                    "confidence": None,
+                    "answer_confidence": None,
+                    "gemma_laya_agree": True,
+                    "selection_mode": "terminal_short_circuit",
+                }
+            else:
+                # A complete non-terminal tree contains exactly b^k leaves.
+                selected, laya_metadata = selector.select(
+                    user_prompt=user_prompt,
+                    assistant_response=current_response,
+                    drafts=full_length_drafts,
+                )
+                laya_metadata["selection_mode"] = "laya"
+
+            total_laya_time += laya_metadata["decision_seconds"]
+
+            print(
+                f"\nSelected: {selected['name']} "
+                f"{repr(selected['text'])}"
+            )
+
+            gemma_best = max(
+                drafts,
+                key=lambda draft: draft["joint_log_probability"],
+            )
+
+            history.append({
+                "iteration": iteration,
+                "context_tokens": len(context_tokens),
+                "drafts": {
+                    draft["name"]: {
+                        "text": draft["text"],
+                        "gemma_probability": draft["joint_probability"],
+                        "average_log_probability": draft["average_log_probability"],
+                        "terminal": draft["terminal"],
+                    }
+                    for draft in drafts
+                },
+                "gemma_best_draft": gemma_best["name"],
+                "selected_draft": selected["name"],
+                "selected_text": selected["text"],
+                "gemma_prefix_seconds": gemma_metrics["prefix_seconds"],
+                "gemma_level_seconds": gemma_metrics["level_seconds"],
+                "gemma_total_seconds": gemma_metrics["total_seconds"],
+                "laya_seconds": laya_metadata["decision_seconds"],
+                "laya_probabilities": laya_metadata.get("probabilities", {}),
+                "laya_confidence": laya_metadata.get("confidence"),
+                "laya_answer_confidence": laya_metadata.get("answer_confidence"),
+                "gemma_laya_agree": laya_metadata.get("gemma_laya_agree"),
+                "selection_mode": laya_metadata.get("selection_mode"),
             })
 
+            committed, should_stop = commit_selected_draft(
+                selected,
+                context_tokens,
+                generated_tokens,
+            )
 
-    print(
-        "\nResults saved to:"
-    )
+            if should_stop:
+                print("\n<end_of_turn>/EOS selected. Ending generation.")
+                break
 
-    print(
-        CSV_FILE.resolve()
+            if not committed:
+                print("\nNo tokens committed. Ending generation.")
+                break
+
+    except KeyboardInterrupt:
+        print("\n\nGeneration interrupted by user.")
+
+    final_response = llm.detokenize(generated_tokens).decode(
+        "utf-8", errors="replace"
     )
+    final_response = final_response.split("<end_of_turn>", 1)[0]
+
+    total_seconds = time.perf_counter() - total_start
+    output_token_count = len(generated_tokens)
+    throughput = output_token_count / total_seconds if total_seconds else 0.0
+
+    metrics = {
+        "k": k,
+        "branching_factor": BRANCHES,
+        "expected_drafts": BRANCHES ** k,
+        "iterations": iteration,
+        "generated_tokens": output_token_count,
+        "initial_context_tokens": initial_context_tokens,
+        "gemma_seconds": total_gemma_time,
+        "laya_seconds": total_laya_time,
+        "total_seconds": total_seconds,
+        "tokens_per_second": throughput,
+    }
+
+    print("\n\n========================================")
+    print("FINAL RESPONSE")
+    print("========================================")
+    print(final_response)
+    print("\n========================================")
+    print("METRICS")
+    print("========================================")
+    print(f"k:                      {k}")
+    print(f"Expected drafts:        {BRANCHES ** k}")
+    print(f"Iterations:             {iteration}")
+    print(f"Generated tokens:       {output_token_count}")
+    print(f"Gemma draft time:       {total_gemma_time:.3f} s")
+    print(f"Laya decision time:     {total_laya_time:.3f} s")
+    print(f"End-to-end time:        {total_seconds:.3f} s")
+    print(f"Effective throughput:   {throughput:.3f} tokens/s")
+    print("========================================")
+
+    return final_response, history, metrics
 
 
 # ============================================================
-# PROGRAM ENTRY POINT
+# CSV
 # ============================================================
+
+def save_history(user_prompt, final_response, history, metrics):
+    fieldnames = [
+        "prompt",
+        "final_response",
+        "k",
+        "branching_factor",
+        "iteration",
+        "context_tokens",
+        "draft_name",
+        "draft_text",
+        "gemma_probability",
+        "average_log_probability",
+        "terminal",
+        "gemma_best_draft",
+        "selected_draft",
+        "selected_text",
+        "laya_probability",
+        "laya_confidence",
+        "laya_answer_confidence",
+        "gemma_laya_agree",
+        "selection_mode",
+        "gemma_prefix_seconds",
+        "gemma_level_seconds",
+        "gemma_total_seconds",
+        "laya_seconds",
+        "total_generated_tokens",
+        "total_end_to_end_seconds",
+        "effective_tokens_per_second",
+    ]
+
+    with open(CSV_FILE, "w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for iteration in history:
+            for draft_name, draft in iteration["drafts"].items():
+                writer.writerow({
+                    "prompt": user_prompt,
+                    "final_response": final_response,
+                    "k": metrics["k"],
+                    "branching_factor": metrics["branching_factor"],
+                    "iteration": iteration["iteration"],
+                    "context_tokens": iteration["context_tokens"],
+                    "draft_name": draft_name,
+                    "draft_text": draft["text"],
+                    "gemma_probability": draft["gemma_probability"],
+                    "average_log_probability": draft["average_log_probability"],
+                    "terminal": draft["terminal"],
+                    "gemma_best_draft": iteration["gemma_best_draft"],
+                    "selected_draft": iteration["selected_draft"],
+                    "selected_text": iteration["selected_text"],
+                    "laya_probability": iteration["laya_probabilities"].get(draft_name),
+                    "laya_confidence": iteration["laya_confidence"],
+                    "laya_answer_confidence": iteration["laya_answer_confidence"],
+                    "gemma_laya_agree": iteration["gemma_laya_agree"],
+                    "selection_mode": iteration["selection_mode"],
+                    "gemma_prefix_seconds": iteration["gemma_prefix_seconds"],
+                    "gemma_level_seconds": json.dumps(iteration["gemma_level_seconds"]),
+                    "gemma_total_seconds": iteration["gemma_total_seconds"],
+                    "laya_seconds": iteration["laya_seconds"],
+                    "total_generated_tokens": metrics["generated_tokens"],
+                    "total_end_to_end_seconds": metrics["total_seconds"],
+                    "effective_tokens_per_second": metrics["tokens_per_second"],
+                })
+
+    print(f"\nResults saved to:\n{CSV_FILE.resolve()}")
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
+
+def read_k():
+    raw = input(f"Draft length k [{DEFAULT_K}]: ").strip()
+    if not raw:
+        return DEFAULT_K
+
+    k = int(raw)
+    if k < 1:
+        raise ValueError("k must be at least 1")
+
+    # Guard against accidental exponential explosions during development.
+    if BRANCHES ** k > 64:
+        raise ValueError(
+            f"k={k} would create {BRANCHES ** k} drafts. "
+            "Current development limit is 64 drafts."
+        )
+
+    return k
+
 
 def main():
+    user_prompt = input("\nEnter prompt: ")
+    k = read_k()
 
-    user_prompt = input(
-        "\nEnter prompt: "
-    )
-
-    (
-        final_response,
-        history,
-        metrics
-    ) = generate_response(
-        user_prompt
-    )
-
-    save_history(
-        user_prompt,
-        final_response,
-        history,
-        metrics
-    )
+    final_response, history, metrics = generate_response(user_prompt, k)
+    save_history(user_prompt, final_response, history, metrics)
 
 
 if __name__ == "__main__":
