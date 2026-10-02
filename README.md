@@ -26,7 +26,7 @@ The experimental decoder uses:
 - Source: `SoAIHQ/gemma-4-E4B-it-GGUF`
 - File: `gemma-4-E4B-it-Q4_K_M.gguf`
 
-The GGUF is intentionally not stored in this repository because of its size.
+GGUF is not stored in this repo, go download it yourself you bum
 
 ## Setup
 
