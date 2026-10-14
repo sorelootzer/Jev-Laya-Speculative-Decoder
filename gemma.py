@@ -14,7 +14,12 @@ import numpy as np
 # ============================================================
 
 SCRIPT_DIR = Path(__file__).parent
-MODEL_PATH = Path(r"C:\Users\lootz\Models\Gemma4\gemma-4-E4B-it-Q4_K_M.gguf")
+MODEL_PATH = (
+    SCRIPT_DIR
+    / "models"
+    / "Gemma4"
+    / "gemma-4-E4B-it-Q4_K_M.gguf"
+)
 
 N_CTX = 2048
 DEFAULT_K = 2
@@ -116,55 +121,7 @@ def get_stop_token_ids():
     return stop_ids
 
 
-STOP_TOKEN_IDS = get_stop_token_ids()
-
-print("\n========== STOP TOKEN DIAGNOSTIC ==========")
-
-# Normal EOS
-print("EOS token ID:", llm.token_eos())
-
-# How this tokenizer represents <end_of_turn>
-eot_tokens = llm.tokenize(
-    b"<start_end_turn/>",
-    add_bos=False,
-    special=True
-)
-
-print("<end_of_turn> token IDs:", eot_tokens)
-
-print("\nIndividual token decoding:")
-
-for token_id in eot_tokens:
-    decoded = llm.detokenize(
-        [token_id]
-    ).decode(
-        "utf-8",
-        errors="replace"
-    )
-
-    print(
-        f"ID {token_id}: {repr(decoded)}"
-    )
-
-# Verify the entire sequence decodes correctly
-full_decoded = llm.detokenize(
-    eot_tokens
-).decode(
-    "utf-8",
-    errors="replace"
-)
-
-print(
-    "\nFull sequence:",
-    repr(full_decoded)
-)
-
-print(
-    "\nDetected single-token stop IDs:",
-    STOP_TOKEN_IDS
-)
-
-print("===========================================\n")
+STOP_TOKEN_IDS = set()
 
 # ============================================================
 # GENERIC TOKEN TREE
@@ -607,11 +564,13 @@ def read_k():
 
 
 def main():
+    global STOP_TOKEN_IDS
+
     k = read_k()
     user_prompt = input("\nEnter prompt: ")
 
-    # Ask for all runtime configuration before loading either model.
     load_gemma()
+    STOP_TOKEN_IDS = get_stop_token_ids()
 
     final_response, history, metrics = generate_response(user_prompt, k)
     save_history(user_prompt, final_response, history, metrics)
