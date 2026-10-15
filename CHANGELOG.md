@@ -4,15 +4,43 @@ Chronological development log for the JEV-Laya Speculative Decoder.
 
 ## TODO / Next Steps
 
-- Correct Gemma 4 turn termination using the actual multi-token `<start_end_turn/>` sequence, including matches that span decoding iterations.
-- Inspect and align the manually constructed chat prompt with the GGUF's actual Gemma 4 chat/control-token template.
-- Prevent control-token fragments from being treated as ordinary semantic alternatives by Laya.
-- Complete terminal-leaf integration so Laya can receive the full pruned set of valid leaves, including short terminal leaves.
-- Further optimize KV-cache/tree evaluation and investigate batching; the current decoder reuses a saved root prefix but still restores/evaluates speculative paths per node.
-- Benchmark normal Gemma decoding against the Laya-guided decoder.
-- Evaluate output quality alongside latency/throughput so selection improvements are not measured only by speed.
+1. **KV-cache and speculative-tree optimization (highest priority).** Preserve accepted-prefix KV state across decoding iterations; cache and reuse intermediate tree-node states rather than restoring the root and re-evaluating each path; investigate batched branch evaluation. Existing root-state reuse is only a partial optimization.
+2. **Controlled baseline benchmarks.** Compare Gemma-only greedy decoding, Gemma-tree maximum-joint-probability selection, and Laya-guided decoding on identical prompts, including latency, throughput, accuracy, and verbosity.
+3. **Laya selection reliability.** Investigate incorrect numerical choices, candidate ordering/presentation sensitivity, effects of draft length `k`, and the checkpoint temperature-calibration warning. Do not treat uncalibrated confidence as correctness.
+4. **Completion-controller validation.** Compare the 80% terminal-draft completion override and format-based stopping against the unmodified selector; measure premature stops and prevention of post-answer rambling.
+5. **Long-context KV-cache management.** Design context rollover, trimming, or summarization to handle long sessions within `n_ctx` while retaining useful information.
+6. **Regression tests and scaling.** Test `k=2`, `k=3`, early terminal leaves, EOS/EOT, output-format stopping, and additional GGUF versions; benchmark growth with `k` and branching factor `b`.
 
 ---
+
+## 2026-10-16 — Gemma 4 Termination, Completion Control, and Persistent Inference
+
+### Gemma decoder changes
+- Updated prompt framing to match the GGUF's embedded Gemma 4 canonical chat template, using `<|turn>user`, `<turn|>`, and `<|turn>model`.
+- Diagnosed special end-of-turn token ID 106 (`<turn|>`) and EOS token ID 1. The older `<start_end_turn/>` spelling was not the active single-token end-of-turn marker for this model.
+- Added EOS/EOT detection during speculative tree construction and token commitment, plus configurable root-level stop-probability overrides.
+- Preserved meaningful terminal candidates (e.g. `22` followed by EOT), while excluding control-only or malformed protocol candidates from Laya selection.
+- Added format-aware completion detection and a high-probability terminal-draft override to prevent unnecessary continuation after a sufficiently complete short answer. This is a format heuristic, not a correctness verifier.
+- Retained arbitrary-`k` binary draft trees and saved-root KV-state reuse. **Persistent accepted-prefix and intermediate tree-node KV-cache reuse remain unimplemented.**
+- Added an optional Gemma-only greedy baseline and detailed per-candidate Gemma/Laya probability logging.
+- Reworked the command-line driver into a persistent session: load Gemma and Laya once, reuse them across prompts, and reset inference context per prompt.
+- Moved results to automatically created `results/YYYY-MM-DD/` subfolders with timestamped CSV and optional baseline filenames.
+
+### Laya selector changes
+- Changed `LayaSelector.select()` to return a structured dictionary containing `selected_draft`, `selected_name`, `candidate_evaluations`, `metadata`, and `raw_result` rather than only `(selected_draft, metadata)`.
+- Preserved original Gemma token IDs for the selected draft and per-candidate Gemma/Laya probability comparisons.
+- Updated the choice-question presentation to label complete terminal drafts versus continuations and emphasize correctness and brevity. **This instruction/presentation change is experimental and has not been demonstrated to improve accuracy.**
+- Continued supporting variable `k`, pruned terminal leaves, and candidate-count validation.
+
+### Observations and limitations
+- In one arithmetic test, Laya selected the correct `twenty-two` continuation despite Gemma preferring `18`, but subsequently continued into contradictory explanation until a completion controller was introduced.
+- Other tests showed incorrect numerical selections and strong sensitivity to draft length and candidate wording. No general accuracy improvement has yet been established.
+- The Laya checkpoint warns that some temperature-calibration values are invalid; reported confidence may be uncalibrated.
+- The current implementation has passed local user testing for selected prompts; broader regression tests remain outstanding.
+
+---
+
+Historical entries below this new entry remain unchanged. Earlier entries describe the state *at that date* and should not be retroactively rewritten.
 
 ## 2026-10-15 — Termination Controller Review and Rollback
 
