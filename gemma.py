@@ -106,22 +106,58 @@ def create_chat_context(user_prompt):
     return formatted_prompt, tokens
 
 
-def get_stop_token_ids():
-    stop_ids = {llm.token_eos()}
-    possible_stop_tokens = [
-        
-    b"<start_end_turn/>",
-    b"<eos>",
-    ]
-    for token_text in (b"<end_of_turn>", b"<eos>"):
-        ids = llm.tokenize(token_text, add_bos=False, special=True)
-        if len(ids) == 1:
-            stop_ids.add(ids[0])
-
-    return stop_ids
-
-
+# Confirm the embedded GGUF chat template before using the fallback below.
+# The observed model emits <start_end_turn/> as seven ordinary tokens.
+END_TURN_TEXT = "<start_end_turn/>"
 STOP_TOKEN_IDS = set()
+
+
+def get_stop_token_ids():
+    return {llm.token_eos()}
+
+
+def control_status(token_ids):
+    """Classify complete and partial end-turn markers without assuming one token."""
+    if any(token_id in STOP_TOKEN_IDS for token_id in token_ids):
+        return "terminal"
+    text = llm.detokenize(token_ids).decode("utf-8", errors="replace")
+    if END_TURN_TEXT in text:
+        return "terminal"
+    for length in range(1, len(END_TURN_TEXT)):
+        if text.endswith(END_TURN_TEXT[:length]):
+            return "partial"
+    return "normal"
+
+
+def is_control_candidate(generated_tokens, draft):
+    """Reject candidates with control syntax or a partial control suffix."""
+    combined = generated_tokens + draft["token_ids"]
+    text = llm.detokenize(combined).decode("utf-8", errors="replace")
+    # Only treat the newly appended portion as control material.
+    old = llm.detokenize(generated_tokens).decode("utf-8", errors="replace")
+    new = text[len(old):] if text.startswith(old) else draft["text"]
+    if any(token_id in STOP_TOKEN_IDS for token_id in draft["token_ids"]):
+        return True
+    if END_TURN_TEXT in text:
+        return True
+    # Control-like XML fragments should not be presented to the semantic selector.
+    if "<" in new or ">" in new:
+        return True
+    return control_status(combined) != "normal"
+
+
+def commit_control_aware(selected, context_tokens, generated_tokens):
+    """Commit only visible content, stopping on EOS or completed end-turn marker."""
+    committed = []
+    for token_id in selected["token_ids"]:
+        if token_id in STOP_TOKEN_IDS:
+            return committed, True
+        context_tokens.append(token_id)
+        generated_tokens.append(token_id)
+        committed.append(token_id)
+        if control_status(generated_tokens) == "terminal":
+            return committed, True
+    return committed, False
 
 # ============================================================
 # GENERIC TOKEN TREE
@@ -199,7 +235,7 @@ def generate_drafts(context_tokens, k, branching_factor=BRANCHES):
                     node["joint_log_probability"]
                     + math.log(max(candidate["probability"], 1e-45))
                 )
-                terminal = candidate["id"] in STOP_TOKEN_IDS
+                terminal = control_status(context_tokens + child_token_ids) == "terminal"
 
                 child = {
                     "name": child_name,
@@ -238,6 +274,7 @@ def generate_drafts(context_tokens, k, branching_factor=BRANCHES):
                 leaf["joint_log_probability"] / len(leaf["token_ids"])
             ),
             "terminal": leaf["terminal"],
+            "is_terminal": leaf["terminal"],
             "draft_length": len(leaf["token_ids"]),
         })
 
@@ -271,17 +308,7 @@ def print_drafts(drafts):
 
 
 def commit_selected_draft(selected, context_tokens, generated_tokens):
-    committed = []
-
-    for token_id in selected["token_ids"]:
-        if token_id in STOP_TOKEN_IDS:
-            return committed, True
-
-        context_tokens.append(token_id)
-        generated_tokens.append(token_id)
-        committed.append(token_id)
-
-    return committed, bool(selected.get("terminal", False))
+    return commit_control_aware(selected, context_tokens, generated_tokens)
 
 
 # ============================================================
@@ -334,42 +361,38 @@ def generate_response(user_prompt, k):
             print(f"\n--- Iteration {iteration} ---")
             print_drafts(drafts)
 
-            # If the highest-probability first-step continuation is already a
-            # terminal candidate, avoid forcing Laya to choose among paths that
-            # conceptually continue after the model has ended its turn.
-            terminal_drafts = [d for d in drafts if d["terminal"]]
-
             current_response = llm.detokenize(generated_tokens).decode(
                 "utf-8", errors="replace"
             )
 
-            # LayaSelector currently requires exactly b^k full-length drafts.
-            # Until it accepts early-terminal paths, use Laya only when the tree
-            # is complete. A terminal-only tree ends immediately.
-            full_length_drafts = [d for d in drafts if len(d["token_ids"]) == k]
+            # Protocol handling is independent of Laya's semantic decisions.
+            semantic_drafts = [
+                d for d in drafts
+                if not is_control_candidate(generated_tokens, d)
+                and not d["terminal"]
+            ]
+            filtered_count = len(drafts) - len(semantic_drafts)
 
-            if not full_length_drafts and terminal_drafts:
-                selected = max(
-                    terminal_drafts,
-                    key=lambda d: d["joint_log_probability"],
+            if semantic_drafts:
+                selected, laya_metadata = selector.select(
+                    user_prompt=user_prompt,
+                    assistant_response=current_response,
+                    drafts=semantic_drafts,
                 )
+                laya_metadata["selection_mode"] = "laya_filtered"
+            else:
+                # No semantic alternative remains: follow Gemma's best control
+                # continuation. A completed marker will stop during commit.
+                selected = max(drafts, key=lambda d: d["joint_log_probability"])
                 laya_metadata = {
                     "decision_seconds": 0.0,
                     "selected_name": selected["name"],
                     "probabilities": {},
                     "confidence": None,
                     "answer_confidence": None,
-                    "gemma_laya_agree": True,
-                    "selection_mode": "terminal_short_circuit",
+                    "gemma_laya_agree": None,
+                    "selection_mode": "protocol_fallback",
                 }
-            else:
-                # A complete non-terminal tree contains exactly b^k leaves.
-                selected, laya_metadata = selector.select(
-                    user_prompt=user_prompt,
-                    assistant_response=current_response,
-                    drafts=full_length_drafts,
-                )
-                laya_metadata["selection_mode"] = "laya"
 
             total_laya_time += laya_metadata["decision_seconds"]
 
@@ -407,6 +430,7 @@ def generate_response(user_prompt, k):
                 "laya_answer_confidence": laya_metadata.get("answer_confidence"),
                 "gemma_laya_agree": laya_metadata.get("gemma_laya_agree"),
                 "selection_mode": laya_metadata.get("selection_mode"),
+                "control_drafts_filtered": filtered_count,
             })
 
             committed, should_stop = commit_selected_draft(
@@ -429,7 +453,7 @@ def generate_response(user_prompt, k):
     final_response = llm.detokenize(generated_tokens).decode(
         "utf-8", errors="replace"
     )
-    final_response = final_response.split("<end_of_turn>", 1)[0]
+    final_response = final_response.split(END_TURN_TEXT, 1)[0]
 
     total_seconds = time.perf_counter() - total_start
     output_token_count = len(generated_tokens)
@@ -493,6 +517,7 @@ def save_history(user_prompt, final_response, history, metrics):
         "laya_answer_confidence",
         "gemma_laya_agree",
         "selection_mode",
+        "control_drafts_filtered",
         "gemma_prefix_seconds",
         "gemma_level_seconds",
         "gemma_total_seconds",
@@ -528,6 +553,7 @@ def save_history(user_prompt, final_response, history, metrics):
                     "laya_answer_confidence": iteration["laya_answer_confidence"],
                     "gemma_laya_agree": iteration["gemma_laya_agree"],
                     "selection_mode": iteration["selection_mode"],
+                    "control_drafts_filtered": iteration["control_drafts_filtered"],
                     "gemma_prefix_seconds": iteration["gemma_prefix_seconds"],
                     "gemma_level_seconds": json.dumps(iteration["gemma_level_seconds"]),
                     "gemma_total_seconds": iteration["gemma_total_seconds"],
@@ -571,6 +597,8 @@ def main():
 
     load_gemma()
     STOP_TOKEN_IDS = get_stop_token_ids()
+    print("EOS token IDs:", STOP_TOKEN_IDS)
+    print("End-turn marker:", repr(END_TURN_TEXT))
 
     final_response, history, metrics = generate_response(user_prompt, k)
     save_history(user_prompt, final_response, history, metrics)
