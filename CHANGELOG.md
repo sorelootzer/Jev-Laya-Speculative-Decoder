@@ -14,6 +14,23 @@ Chronological development log for the JEV-Laya Speculative Decoder.
 
 ---
 
+## 2026-10-15 — Termination Controller Review and Rollback
+
+### Changed
+- Reverted the unreviewed control-token filtering changes to `gemma.py`, restoring the prior implementation.
+- Retained arbitrary-`k` draft generation, Laya selection, saved root KV-state reuse, and CSV performance logging.
+- Deferred the proposed termination controller until it can be reviewed and tested locally.
+
+### Issues identified
+- The observed `<start_end_turn/>` marker tokenizes into seven tokens, which the current single-token stop logic cannot reliably recognize across iterations.
+- Laya can select incomplete control-token sequences, causing malformed trailing output.
+- `gemma.py` currently passes only full-length drafts to Laya, despite `LayaSelector` supporting shorter terminal leaves.
+- The manually constructed Gemma chat template has not yet been verified against the GGUF metadata.
+
+### Next steps
+- Implement sequence-aware termination detection and separate control-token handling from semantic selection.
+- Verify clean termination at `k=2` and `k=3` before approving a new implementation.
+
 ## 2026-10-03 — Single-source Runtime Draft Configuration
 
 ### Changed
