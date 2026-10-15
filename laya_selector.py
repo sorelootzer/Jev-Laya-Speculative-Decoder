@@ -175,9 +175,11 @@ class LayaSelector:
                 draft["name"]
             )
 
-            criteria[name] = (
-                draft["text"]
-            )
+            # Keep criteria as strings for Laya's choice API. Terminal
+            # status describes the option, but does not change Gemma tokens.
+            is_terminal = bool(draft.get("is_terminal", draft.get("terminal", False)))
+            status = "[COMPLETE: stops after this draft]" if is_terminal else "[CONTINUATION]"
+            criteria[name] = f"{draft['text']} {status}"
 
         return {
 
@@ -187,11 +189,15 @@ class LayaSelector:
                     "choice",
 
                 "instructions": (
-                    "Choose the candidate continuation "
-                    "that best continues the assistant "
-                    "response while correctly and "
-                    "coherently answering the user's "
-                    "request."
+                    "Choose the candidate that best satisfies the user's "
+                    "request, considering the assistant response so far. "
+                    "Prioritize factual and logical correctness and obey "
+                    "the requested output format and length. "
+                    "A COMPLETE option ends the response immediately; "
+                    "prefer it when it already provides a sufficient answer. "
+                    "Do not extend an answer merely to add explanation. "
+                    "A CONTINUATION option will require further generation. "
+                    "Do not choose a complete option if its answer is incorrect."
                 ),
 
                 "criteria":
@@ -246,7 +252,8 @@ class LayaSelector:
 
         Returns:
 
-        selected_draft, metadata
+        Dictionary containing selected_draft, selected_name,
+        candidate_evaluations, metadata and raw_result.
         """
 
         valid_names = (
@@ -521,7 +528,18 @@ class LayaSelector:
         }
 
 
-        return (
-            selected_draft,
-            metadata
-        )
+        # Complete structured selector output; no additional Laya inference.
+        return {
+            "selected_draft": selected_draft,
+            "selected_name": selected_name,
+            "candidate_evaluations": {
+                str(draft["name"]): {
+                    "draft": draft,
+                    "gemma_probability": draft.get("joint_probability"),
+                    "laya_probability": probabilities.get(str(draft["name"])),
+                }
+                for draft in drafts
+            },
+            "metadata": metadata,
+            "raw_result": result,
+        }
