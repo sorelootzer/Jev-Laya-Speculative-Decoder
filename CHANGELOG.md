@@ -38,9 +38,6 @@ Chronological development log for the JEV-Laya Speculative Decoder.
 - The Laya checkpoint warns that some temperature-calibration values are invalid; reported confidence may be uncalibrated.
 - The current implementation has passed local user testing for selected prompts; broader regression tests remain outstanding.
 
----
-
-Historical entries below this new entry remain unchanged. Earlier entries describe the state *at that date* and should not be retroactively rewritten.
 
 ## 2026-10-15 — Termination Controller Review and Rollback
 
