@@ -10,7 +10,7 @@ MAX_CHOICES = 24
 
 class JEVSelector:
 
-    def __init__(self, k, branching_factor=2, model_name="jev-1.13",
+    def __init__(self, k, branching_factor=2, model_name="jev-latest",
                  api_key=None, timeout=30):
         if not isinstance(k, int) or k < 1:
             raise ValueError("k must be a positive integer.")

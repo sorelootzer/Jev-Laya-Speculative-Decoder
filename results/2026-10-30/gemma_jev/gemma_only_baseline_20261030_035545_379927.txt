@@ -1,0 +1,5 @@
+Prompt: Explain in two short sentences why ice floats on water.
+Answer: When water freezes, its molecules arrange themselves into a crystalline structure that is less dense than liquid water. This open, crystalline structure takes up more space, causing the ice to float.
+Stop reason: end_of_turn
+Tokens: 36
+Seconds: 12.102
