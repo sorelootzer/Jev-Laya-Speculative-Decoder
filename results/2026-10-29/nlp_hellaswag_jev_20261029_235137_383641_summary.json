@@ -1,0 +1,14 @@
+{
+  "dataset": "hellaswag",
+  "backend": "jev",
+  "split": "validation",
+  "seed": 42,
+  "model": "jev-latest",
+  "count": 20,
+  "correct": 17,
+  "wrong": 3,
+  "invalid": 0,
+  "errors": 0,
+  "accuracy": 0.85,
+  "mean_seconds": 0.26532999999999995
+}

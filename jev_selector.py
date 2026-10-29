@@ -4,7 +4,7 @@ from getpass import getpass
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
-JEV_ENDPOINT = "https://jev-ai.org/api/v1/systemone/"
+JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 MAX_CHOICES = 24
 
 
