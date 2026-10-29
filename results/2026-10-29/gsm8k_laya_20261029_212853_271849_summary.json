@@ -1,0 +1,12 @@
+{
+  "model": "laya_choice",
+  "split": "test",
+  "seed": 42,
+  "distractors": "offsets from gold, shuffled",
+  "count": 200,
+  "correct": 46,
+  "wrong": 154,
+  "invalid_or_error": 0,
+  "accuracy": 0.23,
+  "mean_seconds": 1.1494685
+}

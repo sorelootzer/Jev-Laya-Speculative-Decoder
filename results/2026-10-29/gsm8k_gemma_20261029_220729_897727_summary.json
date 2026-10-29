@@ -1,0 +1,13 @@
+{
+  "model": "gemma",
+  "split": "test",
+  "seed": 42,
+  "max_tokens": 512,
+  "n_ctx": 2048,
+  "count": 20,
+  "correct": 19,
+  "wrong": 1,
+  "invalid_or_error": 0,
+  "accuracy": 0.95,
+  "mean_seconds": 51.58548
+}

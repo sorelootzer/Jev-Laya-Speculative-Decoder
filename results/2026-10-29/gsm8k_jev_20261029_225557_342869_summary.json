@@ -1,0 +1,13 @@
+{
+  "model": "jev_choice",
+  "model_version": "jev-1.13",
+  "split": "test",
+  "seed": 42,
+  "distractors": "offsets from gold, shuffled",
+  "count": 16,
+  "correct": 0,
+  "wrong": 0,
+  "invalid_or_error": 16,
+  "accuracy": 0.0,
+  "mean_seconds": 0.49310625
+}
