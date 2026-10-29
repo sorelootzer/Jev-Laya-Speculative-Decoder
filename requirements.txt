@@ -2,3 +2,5 @@ numpy
 llama-cpp-python
 huggingface_hub
 datasets
+scikit-learn
+requests
