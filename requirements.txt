@@ -4,3 +4,5 @@ huggingface_hub
 datasets
 scikit-learn
 requests
+rouge-score
+bert-score
