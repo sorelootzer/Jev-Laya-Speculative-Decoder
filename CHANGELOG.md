@@ -2,12 +2,10 @@
 
 Chronological development log for the Gemma–JEV Speculative Decoder (formerly Gemma–Laya).
 
-## TODO / Next Steps` section, through its following horizontal divider, with the following section. Insert the dated entries below immediately before the existing `## 2026-10-16` entry. Preserve all earlier chronological entries as historical records.
-
 ## TODO / Next Steps
 
-2. **KV-cache and speculative-tree optimization (highest performance priority).** Preserve the accepted-prefix KV state across decoding iterations, reuse intermediate tree-node states, and investigate batched branch evaluation. Existing saved-root reuse is only partial optimization; quantify memory-copy overhead as well as token evaluations.
 1. **Verify JEV participation in the combined decoder (highest overall priority).** Record JEV calls, candidate counts, accepted branch, disagreements with Gemma, overrides, and explicit reasons when JEV is bypassed. Do not count a Gemma-only termination as a JEV-assisted result.
+2. **KV-cache and speculative-tree optimization (highest performance priority).** Preserve the accepted-prefix KV state across decoding iterations, reuse intermediate tree-node states, and investigate batched branch evaluation. Existing saved-root reuse is only partial optimization; quantify memory-copy overhead as well as token evaluations.
 3. **Controlled three-arm evaluation.** Compare Gemma greedy, Gemma-tree highest-joint-probability, and Gemma–JEV on identical prompts, question IDs, output budgets, completion rules, model versions, and hardware. Report accuracy, beneficial/harmful overrides, token counts, latency, and throughput.
 4. **Validate termination and completion control.** Restore and test production-safe EOS/EOT and completion behaviour in the JEV path; distinguish correct completion, format-based stopping, context limits, and premature termination.
 5. **Reproducibility and E4B/E12B comparison.** Pin the JEV model version instead of relying solely on `jev-latest`; log GGUF identity, `k`, branching factor, decoding settings, API/model version, and dataset splits. Compare E4B and E12B using matched conditions.
