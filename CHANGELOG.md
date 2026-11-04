@@ -1,17 +1,57 @@
 # Changelog
 
-Chronological development log for the JEV-Laya Speculative Decoder.
+Chronological development log for the Gemma–JEV Speculative Decoder (formerly Gemma–Laya).
+
+## TODO / Next Steps` section, through its following horizontal divider, with the following section. Insert the dated entries below immediately before the existing `## 2026-10-16` entry. Preserve all earlier chronological entries as historical records.
 
 ## TODO / Next Steps
 
-1. **KV-cache and speculative-tree optimization (highest priority).** Preserve accepted-prefix KV state across decoding iterations; cache and reuse intermediate tree-node states rather than restoring the root and re-evaluating each path; investigate batched branch evaluation. Existing root-state reuse is only a partial optimization.
-2. **Controlled baseline benchmarks.** Compare Gemma-only greedy decoding, Gemma-tree maximum-joint-probability selection, and Laya-guided decoding on identical prompts, including latency, throughput, accuracy, and verbosity.
-3. **Laya selection reliability.** Investigate incorrect numerical choices, candidate ordering/presentation sensitivity, effects of draft length `k`, and the checkpoint temperature-calibration warning. Do not treat uncalibrated confidence as correctness.
-4. **Completion-controller validation.** Compare the 80% terminal-draft completion override and format-based stopping against the unmodified selector; measure premature stops and prevention of post-answer rambling.
-5. **Long-context KV-cache management.** Design context rollover, trimming, or summarization to handle long sessions within `n_ctx` while retaining useful information.
-6. **Regression tests and scaling.** Test `k=2`, `k=3`, early terminal leaves, EOS/EOT, output-format stopping, and additional GGUF versions; benchmark growth with `k` and branching factor `b`.
+2. **KV-cache and speculative-tree optimization (highest performance priority).** Preserve the accepted-prefix KV state across decoding iterations, reuse intermediate tree-node states, and investigate batched branch evaluation. Existing saved-root reuse is only partial optimization; quantify memory-copy overhead as well as token evaluations.
+1. **Verify JEV participation in the combined decoder (highest overall priority).** Record JEV calls, candidate counts, accepted branch, disagreements with Gemma, overrides, and explicit reasons when JEV is bypassed. Do not count a Gemma-only termination as a JEV-assisted result.
+3. **Controlled three-arm evaluation.** Compare Gemma greedy, Gemma-tree highest-joint-probability, and Gemma–JEV on identical prompts, question IDs, output budgets, completion rules, model versions, and hardware. Report accuracy, beneficial/harmful overrides, token counts, latency, and throughput.
+4. **Validate termination and completion control.** Restore and test production-safe EOS/EOT and completion behaviour in the JEV path; distinguish correct completion, format-based stopping, context limits, and premature termination.
+5. **Reproducibility and E4B/E12B comparison.** Pin the JEV model version instead of relying solely on `jev-latest`; log GGUF identity, `k`, branching factor, decoding settings, API/model version, and dataset splits. Compare E4B and E12B using matched conditions.
+6. **Long-context and regression testing.** Handle `n_ctx` exhaustion; test `k=2`/`k=3`, pruned terminal leaves, control-token filtering, selector failures, dataset adapters, and output logging.
+
+**Scope decision:** Laya is no longer part of the active development or evaluation plan. Retain its prior entries below solely as historical development records; do not allocate new TODO work to it.
 
 ---
+
+## 2026-11-04 — Paired NLP Pilot and Evaluation Validity
+
+### Evaluated
+- Ran 20 paired Gemma E4B and Gemma–JEV examples each on Story Cloze, WinoGrande, and GLUE RTE, using `k=2` and a 16-token output cap (60 questions total).
+- Story Cloze: Gemma 20/20 and Gemma–JEV 20/20; mean times 7.29 s and 5.89 s respectively.
+- WinoGrande: Gemma 15/20 and Gemma–JEV 15/20; mean times 8.22 s and 6.61 s respectively.
+- RTE: Gemma 20/20 and Gemma–JEV 20/20; mean times 8.56 s and 6.57 s respectively.
+- Aggregate accuracy was 55/60 (91.7%) for both paths. The measured combined-path mean was about 6.36 s versus 8.02 s for Gemma alone.
+
+### Critical interpretation
+- Question-level logs show **zero JEV selection calls in all 60 paired runs**. The combined path therefore did not actually exercise JEV; identical accuracy cannot be presented as evidence of selector quality.
+- The apparent latency reduction is **not a demonstrated JEV speedup**. Different Gemma execution/termination paths and token counts may explain the difference. Benchmark instrumentation must verify selector participation before attributing improvements.
+- These are small pilot samples, not conclusive generalization results.
+- Extended local benchmark tooling for WinoGrande, RTE, Story Cloze, and BLiMP was prepared during development; do not infer that every local test file has been committed to GitHub.
+
+## 2026-10-30 — JEV Decoder and API Integration
+
+### Added / changed in repository
+- Added `gemma_jev.py`, a separate experimental Gemma–JEV speculative decoder, retaining binary branching, Gemma 4 EOS/EOT handling, candidate filtering, and selector mapping.
+- Switched the JEV API endpoint in `jev_selector.py` from `https://jev-ai.org/api/v1/systemone/` to `https://api.typesafe.ai/v1/systemone`.
+- Updated the default JEV model identifier from `jev-1.13` to `jev-latest`; this rolling identifier needs version logging for reproducibility.
+- Introduced a bounded pilot configuration: 12 output tokens, at most 24 draft candidates, and disabled experimental completion/EOS/EOT probability overrides. These differ from the earlier Gemma–Laya decoder and should not be used for uncontrolled performance comparisons.
+- Committed a HellaSwag JEV standalone-choice summary: 17/20 correct (85%) with mean decision time about 0.265 s. This is a small sample and measures selection among supplied endings, not the combined speculative decoder.
+- Added two Gemma-only pilot response records for the prompt explaining why ice floats; no JEV effect can be inferred from these records.
+
+## 2026-10-29 — NLP and GSM8K Benchmark Infrastructure
+
+### Added / changed in repository
+- Added shared `nlp_utils.py` dataset adapters, deterministic sampling/option handling, scoring, and result persistence.
+- Expanded `requirements.txt` to include `datasets`, `scikit-learn`, and `requests` alongside the existing model dependencies.
+
+### Experimental observations (local benchmark results)
+- Standalone Laya four-choice HellaSwag: 52/200 (26%) and SST-2: 132/200 (66%); both showed a pronounced preference for option A. These results motivated discontinuing Laya development, but do not measure JEV.
+- Standalone Gemma E4B: HellaSwag 16/20 (80%) and SST-2 16/20 (80%) in the uploaded pilot runs; sample sizes differ from the Laya runs.
+- GSM8K generation results were sensitive to output limits: Gemma achieved 19/20 (95%) with a 512-token allowance; the one truncated question was later solved in an individual retest. The retest does not change the original 19/20 benchmark score.
 
 ## 2026-10-16 — Gemma 4 Termination, Completion Control, and Persistent Inference
 
