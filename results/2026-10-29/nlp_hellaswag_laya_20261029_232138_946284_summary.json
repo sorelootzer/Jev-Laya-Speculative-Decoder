@@ -1,0 +1,14 @@
+{
+  "dataset": "hellaswag",
+  "backend": "laya",
+  "split": "validation",
+  "seed": 42,
+  "model": "convaiinnovations/laya",
+  "count": 200,
+  "correct": 52,
+  "wrong": 148,
+  "invalid": 0,
+  "errors": 0,
+  "accuracy": 0.26,
+  "mean_seconds": 2.6754719999999996
+}

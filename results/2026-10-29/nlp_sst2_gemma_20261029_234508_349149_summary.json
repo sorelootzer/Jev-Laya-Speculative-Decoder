@@ -1,0 +1,16 @@
+{
+  "dataset": "sst2",
+  "backend": "gemma",
+  "split": "validation",
+  "seed": 42,
+  "max_tokens": 16,
+  "n_ctx": 2048,
+  "model": "C:\\Users\\lootz\\Documents\\Speculative Decoder\\models\\Gemma4\\gemma-4-E4B-it-Q4_K_M.gguf",
+  "count": 20,
+  "correct": 16,
+  "wrong": 4,
+  "invalid": 0,
+  "errors": 0,
+  "accuracy": 0.8,
+  "mean_seconds": 3.9464750000000004
+}

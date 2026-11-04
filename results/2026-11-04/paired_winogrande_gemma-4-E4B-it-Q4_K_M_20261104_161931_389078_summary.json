@@ -1,0 +1,53 @@
+{
+  "dataset": "winogrande",
+  "split": "validation",
+  "seed": 42,
+  "model_path": "C:\\Users\\lootz\\Documents\\Speculative Decoder\\Models\\Gemma4\\gemma-4-E4B-it-Q4_K_M.gguf",
+  "jev_model": "jev-latest",
+  "k": 2,
+  "max_tokens": 16,
+  "count": 20,
+  "errors": 0,
+  "stats": {
+    "gemma": {
+      "correct": 15,
+      "wrong": 5,
+      "invalid": 0,
+      "accuracy_strict": 0.75,
+      "mean_seconds": 8.218329739954788
+    },
+    "gemma_jev": {
+      "correct": 15,
+      "wrong": 5,
+      "invalid": 0,
+      "accuracy_strict": 0.75,
+      "mean_seconds": 6.610087810037657
+    }
+  },
+  "accuracy_delta_pp": 0.0,
+  "transitions": {
+    "both_correct": 15,
+    "both_wrong": 5
+  },
+  "confusion_matrices": {
+    "gemma": {
+      "pred_A_gold_A": 10,
+      "pred_A_gold_B": 1,
+      "pred_B_gold_A": 4,
+      "pred_B_gold_B": 5
+    },
+    "gemma_jev": {
+      "pred_A_gold_A": 10,
+      "pred_A_gold_B": 1,
+      "pred_B_gold_A": 4,
+      "pred_B_gold_B": 5
+    }
+  },
+  "by_category": {
+    "overall": {
+      "n": 20,
+      "gemma_correct": 15,
+      "gemma_jev_correct": 15
+    }
+  }
+}

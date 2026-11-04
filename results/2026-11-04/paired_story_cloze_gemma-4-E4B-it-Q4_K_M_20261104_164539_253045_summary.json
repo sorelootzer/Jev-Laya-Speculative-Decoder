@@ -1,0 +1,52 @@
+{
+  "dataset": "story_cloze",
+  "split": "validation",
+  "seed": 42,
+  "model_path": "C:\\Users\\lootz\\Documents\\Speculative Decoder\\Models\\Gemma4\\gemma-4-E4B-it-Q4_K_M.gguf",
+  "jev_model": "jev-latest",
+  "k": 2,
+  "max_tokens": 16,
+  "count": 20,
+  "errors": 0,
+  "stats": {
+    "gemma": {
+      "correct": 20,
+      "wrong": 0,
+      "invalid": 0,
+      "accuracy_strict": 1.0,
+      "mean_seconds": 7.287772089999635
+    },
+    "gemma_jev": {
+      "correct": 20,
+      "wrong": 0,
+      "invalid": 0,
+      "accuracy_strict": 1.0,
+      "mean_seconds": 5.8934434000286275
+    }
+  },
+  "accuracy_delta_pp": 0.0,
+  "transitions": {
+    "both_correct": 20
+  },
+  "confusion_matrices": {
+    "gemma": {
+      "pred_A_gold_A": 10,
+      "pred_A_gold_B": 0,
+      "pred_B_gold_A": 0,
+      "pred_B_gold_B": 10
+    },
+    "gemma_jev": {
+      "pred_A_gold_A": 10,
+      "pred_A_gold_B": 0,
+      "pred_B_gold_A": 0,
+      "pred_B_gold_B": 10
+    }
+  },
+  "by_category": {
+    "overall": {
+      "n": 20,
+      "gemma_correct": 20,
+      "gemma_jev_correct": 20
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "dataset": "sst2",
+  "backend": "laya",
+  "split": "validation",
+  "seed": 42,
+  "model": "convaiinnovations/laya",
+  "count": 200,
+  "correct": 132,
+  "wrong": 68,
+  "invalid": 0,
+  "errors": 0,
+  "accuracy": 0.66,
+  "mean_seconds": 1.0557779999999999
+}

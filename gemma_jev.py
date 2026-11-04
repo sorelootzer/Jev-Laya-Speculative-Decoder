@@ -1,4 +1,4 @@
-"""Experimental Gemma + Jev decoder with bounded output for pilot runs."""
+"""Gemma-JEV speculative decoder, configurable for paired NLP benchmarking."""
 from pathlib import Path
 import argparse
 import csv
@@ -9,9 +9,9 @@ import time
 from datetime import datetime
 import numpy as np
 from llama_cpp import Llama
-from jev_selector import JEVSelector
 
 ROOT = Path(__file__).resolve().parent
+RESULTS_DIR = ROOT / "results"
 MODEL_PATH = ROOT / "models" / "Gemma4" / "gemma-4-E4B-it-Q4_K_M.gguf"
 # Unique per-run filenames are assigned when the prompt is executed.
 CSV_PATH = None
@@ -19,27 +19,30 @@ BASELINE_PATH = None
 
 
 def new_output_paths():
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    return (ROOT / f"gemma_jev_results_{stamp}.csv",
-            ROOT / f"gemma_only_baseline_{stamp}.txt")
+    now = datetime.now()
+    day_dir = RESULTS_DIR / now.strftime("%Y-%m-%d")
+    day_dir.mkdir(parents=True, exist_ok=True)
+    stamp = now.strftime("%Y%m%d_%H%M%S_%f")
+    return (day_dir / f"decoder_results_{stamp}.csv",
+            day_dir / f"gemma_greedy_baseline_{stamp}.txt")
 N_CTX = 2048
 BRANCHES = 2
 DEFAULT_K = 2
-MAX_DRAFTS = 24  # Jev choice API limit
-MAX_OUTPUT_TOKENS = 12  # Keep the first API smoke run short
+MAX_DRAFTS = 24  # JEV choice API supports at most 24 options
+MAX_OUTPUT_TOKENS = 64
 
 # Experimental, format-aware completion policy. Does not verify correctness.
-ENABLE_COMPLETION_CONTROL = False
+ENABLE_COMPLETION_CONTROL = True
 COMPLETION_THRESHOLD = 0.80
 
 # Optional experimental override. None disables it.
-EOS_THRESHOLD = None  # root-level EOS override; set None to disable
-EOT_THRESHOLD = None  # root-level Gemma turn-end override; set None to disable
+EOS_THRESHOLD = 0.90  # root-level EOS override; set None to disable
+EOT_THRESHOLD = 0.50  # root-level Gemma turn-end override; set None to disable
 # Only force completion when the entire greedy continuation matches a marker.
 CONTROL_PROBE_THRESHOLD = 0.50
 # Stop if Gemma itself strongly favors a verified end-of-turn sequence.
 # Set to None to disable this policy.
-CONTROL_STOP_THRESHOLD = None
+CONTROL_STOP_THRESHOLD = 0.50
 
 llm = None
 EOS_ID = None
@@ -52,12 +55,13 @@ def decode(tokens):
     return llm.detokenize(list(tokens)).decode("utf-8", errors="replace")
 
 
-def load_gemma():
+def load_gemma(model_path=None):
     global llm, EOS_ID, EOT_ID, STOP_IDS, MARKERS
-    if not MODEL_PATH.is_file():
-        raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
+    path = Path(model_path) if model_path else MODEL_PATH
+    if not path.is_file():
+        raise FileNotFoundError(f"Model not found: {path}")
     t = time.perf_counter()
-    llm = Llama(model_path=str(MODEL_PATH), n_ctx=N_CTX,
+    llm = Llama(model_path=str(path), n_ctx=N_CTX,
                 logits_all=True, n_gpu_layers=0, verbose=False)
     EOS_ID = int(llm.token_eos())
     eot_ids = list(llm.tokenize(b"<turn|>", add_bos=False, special=True))
@@ -126,7 +130,7 @@ def control_draft(accepted, draft):
     """Reject protocol-only or malformed drafts, NOT completed answers.
 
     A draft like [token_for_22, EOT] is a valid terminal answer.
-    A draft like [EOT] is control-only and must not be sent to Jev.
+    A draft like [EOT] is control-only and must not be sent to Laya.
     """
     ids = draft["token_ids"]
     visible = visible_token_ids(draft)
@@ -253,6 +257,8 @@ def detect_output_format(prompt):
     )
     if any(re.search(pattern, text) for pattern in number_patterns):
         return "number"
+    if "reply with only the option letter" in text:
+        return "choice"
     if any(phrase in text for phrase in (
         "one sentence", "single sentence", "as few words as possible",
         "brief answer", "short answer", "concise answer",
@@ -265,6 +271,8 @@ def response_is_complete(response, output_format):
     response = response.strip()
     if not response or output_format is None:
         return False
+    if output_format == "choice":
+        return re.fullmatch(r"[A-D]", response, flags=re.IGNORECASE) is not None
     if output_format == "number":
         return re.fullmatch(r"[+-]?\d+(?:\.\d+)?", response) is not None
     if output_format == "short_sentence":
@@ -286,20 +294,25 @@ def completion_candidate(drafts, output, output_format):
     return None
 
 
-def run(prompt, k, selector, csv_path):
+def run(prompt, k, selector, csv_path=None, max_tokens=None, verbose=True):
+    max_tokens = MAX_OUTPUT_TOKENS if max_tokens is None else max_tokens
+    if max_tokens < k:
+        raise ValueError("max_tokens must be >= k")
     context = prompt_tokens(prompt)
     output = []
     rows = []
     selection_results = []
+    candidate_evaluations = {}
     output_format = detect_output_format(prompt)
     started = time.perf_counter()
-    gemma_time = jev_time = 0.0
+    gemma_time = laya_time = 0.0
+    candidate_evaluations = {}
     overrides = 0
     reason = None
     iteration = 0
     if ENABLE_COMPLETION_CONTROL and response_is_complete(decode(output), output_format):
         reason = "format_complete"
-    while reason is None and len(context)+k <= N_CTX and len(output)+k <= MAX_OUTPUT_TOKENS:
+    while reason is None and len(context)+k <= N_CTX and len(output)+k <= max_tokens:
         iteration += 1
         drafts, metrics = make_drafts(context, k)
         gemma_time += metrics["total_seconds"]
@@ -308,7 +321,7 @@ def run(prompt, k, selector, csv_path):
             overrides += 1
             print(f"Iteration {iteration}: {reason}; "
                   f"EOS P={metrics['root_eos_probability']:.4f}, "
-                  f"EOT P={metrics['root_eot_probability']:.4f}; stopping before Jev.")
+                  f"EOT P={metrics['root_eot_probability']:.4f}; stopping before Laya.")
             rows.append({
                 "iteration": iteration, "k": k, "draft_name": "", "draft_text": "",
                 "gemma_probability": None, "terminal": True,
@@ -324,18 +337,21 @@ def run(prompt, k, selector, csv_path):
                 "completion_override": False,
                 "completion_candidate": "",
                 "completion_probability": None,
+                "selector_backend": selector.backend_name,
+                "selector_model_version": selector.model_name,
             })
             break
         if not drafts:
             reason = "no_valid_drafts"
             break
         selected = None
-        jev = {"decision_seconds": 0.0, "probabilities": {}, "model_version": "not_called"}
+        candidate_evaluations = {}
+        laya = {"decision_seconds": 0, "probabilities": {}}
         mode = "jev"
         eos_p = metrics["root_eos_probability"]
         eot_p = metrics["root_eot_probability"]
         top = metrics["root_top"]
-        # A verified high-probability turn closure takes precedence over Jev.
+        # A verified high-probability turn closure takes precedence over Laya.
         if (CONTROL_STOP_THRESHOLD is not None
                 and top["probability"] >= CONTROL_STOP_THRESHOLD
                 and (top["id"] in STOP_IDS or any(
@@ -347,7 +363,7 @@ def run(prompt, k, selector, csv_path):
                 mode = "gemma_control_stop"
                 overrides += 1
         # A complete terminal answer from Gemma may close a concise response
-        # without giving Jev another opportunity to append an explanation.
+        # without giving Laya another opportunity to append an explanation.
         completion = completion_candidate(drafts, output, output_format) if reason is None else None
         if completion is not None:
             selected = completion
@@ -361,12 +377,12 @@ def run(prompt, k, selector, csv_path):
                     user_prompt=prompt, assistant_response=decode(output), drafts=semantic
                 )
                 selected = selection["selected_draft"]
-                jev = selection["metadata"]
+                laya = selection["metadata"]
                 candidate_evaluations = selection["candidate_evaluations"]
-                raw_jev_result = selection["raw_result"]
+                raw_laya_result = selection["raw_result"]
                 selection_results.append(selection)
-                mode = "jev_filtered"
-                jev_time += jev.get("decision_seconds", 0.0)
+                mode = "jev_filtered"  # Shared label for existing CSV readers
+                laya_time += laya.get("decision_seconds", 0.0)
                 reason = commit(selected, context, output)
                 if (reason is None and ENABLE_COMPLETION_CONTROL
                         and response_is_complete(
@@ -384,14 +400,14 @@ def run(prompt, k, selector, csv_path):
               f"text={selected['text']!r}" if selected else
               f"Iteration {iteration}: {mode}, EOS P={eos_p:.4f}, "
               f"EOT P={eot_p:.4f}, STOP")
-        print("Candidate drafts (Gemma / Jev):")
+        print("Candidate drafts (Gemma / JEV):")
         for d in sorted(drafts, key=lambda x: x["joint_probability"], reverse=True):
             evaluation = (candidate_evaluations.get(d["name"], {})
                           if mode == "jev_filtered" else {})
             lp = evaluation.get("jev_probability")
             label = "JEV" if evaluation else "FILTERED/CONTROL"
             chosen = " [SELECTED]" if selected and selected["name"] == d["name"] else ""
-            lp_text = f" Jev P={float(lp):.6g}" if lp is not None else ""
+            lp_text = f" Selector P={float(lp):.6g}" if lp is not None else ""
             print(f"  {d['name']} {d['text']!r} Gemma P={d['joint_probability']:.6g}"
                   f"{lp_text} [{label}]{'[EOT]' if d.get('terminal') else ''}{chosen}")
         for draft in drafts:
@@ -407,25 +423,23 @@ def run(prompt, k, selector, csv_path):
                     candidate_evaluations.get(draft["name"], {}).get("jev_probability")
                     if mode == "jev_filtered" else None
                 ),
-                "jev_seconds": jev.get("decision_seconds", 0.0),
-                "jev_model_version": jev.get("model_version", "not_called"),
-                "jev_input_tokens": jev.get("input_tokens"),
-                "jev_state_tokens": jev.get("state_tokens"),
-                "jev_state_tokens_dropped": jev.get("state_tokens_dropped"),
                 "selection_mode": mode, "root_eos_probability": eos_p,
                 "root_eot_probability": eot_p,
                 "gemma_seconds": metrics["total_seconds"],
                 "gemma_level_seconds": json.dumps(metrics["level_seconds"]),
+                "jev_seconds": laya.get("decision_seconds", 0.0),
                 "iteration_termination_reason": reason or "",
                 "output_format": output_format or "unrestricted",
                 "completion_override": mode == "completion_override",
                 "completion_candidate": selected["name"] if mode == "completion_override" else "",
                 "completion_probability": selected["joint_probability"] if mode == "completion_override" else None,
+                "selector_backend": selector.backend_name,
+                "selector_model_version": laya.get("model_version", selector.model_name),
             })
         if reason:
             break
     if reason is None:
-        reason = "max_output_tokens" if len(output)+k > MAX_OUTPUT_TOKENS else "context_limit"
+        reason = "max_tokens" if len(output)+k > max_tokens else "context_limit"
     response = decode([token for token in output if token not in STOP_IDS])
     for marker, _ in MARKERS:
         response = response.split(marker, 1)[0]
@@ -433,28 +447,34 @@ def run(prompt, k, selector, csv_path):
     for row in rows:
         row.update(final_response=response, termination_reason=reason,
                    control_overrides=overrides, elapsed_seconds=elapsed)
-    if rows:
+    if rows and csv_path is not None:
         with csv_path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+            writer = csv.DictWriter(f, fieldnames=list(dict.fromkeys(key for row in rows for key in row)))
             writer.writeheader()
             writer.writerows(rows)
-    print("\nFINAL RESPONSE:\n" + response)
-    print(f"Termination={reason}; iterations={iteration}; output tokens={len(output)}")
-    print(f"Gemma={gemma_time:.3f}s; Jev={jev_time:.3f}s; "
+    if verbose:
+        print("\nFINAL RESPONSE:\n" + response)
+    if verbose:
+        print(f"Termination={reason}; iterations={iteration}; output tokens={len(output)}")
+        print(f"Gemma={gemma_time:.3f}s; Selector={laya_time:.3f}s; "
           f"total={elapsed:.3f}s; throughput={len(output)/elapsed:.3f} tokens/s")
-    print(f"Control overrides={overrides}; CSV={csv_path}")
+    if verbose:
+        print(f"Control overrides={overrides}; CSV={csv_path}")
     return {"response": response, "rows": rows,
-            "jev_selections": selection_results, "termination_reason": reason}
+            "jev_selections": selection_results, "termination_reason": reason,
+            "output_tokens": len(output), "elapsed_seconds": elapsed,
+            "jev_seconds": laya_time, "gemma_seconds": gemma_time}
 
 
 
-def greedy_baseline(prompt, baseline_path):
+def greedy_baseline(prompt, baseline_path=None, max_tokens=None):
     """Run Gemma alone with identical prompt framing and context budget."""
+    max_tokens = MAX_OUTPUT_TOKENS if max_tokens is None else max_tokens
     context = prompt_tokens(prompt)
     generated = []
     start = time.perf_counter()
     reason = "context_limit"
-    while len(generated) < MAX_OUTPUT_TOKENS and len(context) < N_CTX:
+    while len(context) < N_CTX and len(generated) < max_tokens:
         llm.reset()
         llm.eval(context)
         logits = llm.scores[llm.n_tokens - 1]
@@ -464,72 +484,45 @@ def greedy_baseline(prompt, baseline_path):
             break
         generated.append(token)
         context.append(token)
-    if len(generated) >= MAX_OUTPUT_TOKENS and reason == "context_limit":
-        reason = "max_output_tokens"
+    if reason == "context_limit" and len(generated) >= max_tokens:
+        reason = "max_tokens"
     result = decode(generated)
     duration = time.perf_counter() - start
-    baseline_path.write_text(
+    if baseline_path is not None:
+        baseline_path.write_text(
         f"Prompt: {prompt}\nAnswer: {result}\nStop reason: {reason}\n"
         f"Tokens: {len(generated)}\nSeconds: {duration:.3f}\n",
         encoding="utf-8"
     )
     print(f"Gemma-only baseline: {result!r} ({reason}, {duration:.2f}s)")
-    return result
+    return {"response": result, "termination_reason": reason,
+            "output_tokens": len(generated), "elapsed_seconds": duration}
 
 def main():
-    global MODEL_PATH, MAX_OUTPUT_TOKENS
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, default=MODEL_PATH,
-                        help="Path to the small Gemma GGUF model")
-    parser.add_argument("--max-output-tokens", type=int, default=MAX_OUTPUT_TOKENS,
-                        help="Output cap for this pilot run (default: 12)")
+    parser = argparse.ArgumentParser(description="Gemma-JEV speculative decoder")
+    parser.add_argument("--model", default=str(MODEL_PATH), help="Gemma GGUF path")
+    parser.add_argument("--jev-model", default="jev-latest")
+    parser.add_argument("--k", type=int, default=DEFAULT_K)
+    parser.add_argument("--max-tokens", type=int, default=MAX_OUTPUT_TOKENS)
     args = parser.parse_args()
-    MODEL_PATH = args.model
-    MAX_OUTPUT_TOKENS = args.max_output_tokens
-    if MAX_OUTPUT_TOKENS < 1:
-        parser.error("--max-output-tokens must be positive")
-
-    raw = input(f"Draft length k [default = {DEFAULT_K}]: ").strip()
-    k = int(raw) if raw else DEFAULT_K
-    if k < 1 or BRANCHES ** k > MAX_DRAFTS:
-        raise ValueError(f"Choose k>=1 with 2^k <= {MAX_DRAFTS}")
-
-    # Initialize both model instances once for the lifetime of this process.
-    load_gemma()
-    selector = JEVSelector(k=k, branching_factor=BRANCHES,
-                           model_name="jev-latest", timeout=60)
-    print(f"\nGemma + Jev ready (model=jev-latest, max output={MAX_OUTPUT_TOKENS} tokens). "
-          "Type 'exit' or 'quit' to end the session.")
-
+    if args.k < 1 or BRANCHES ** args.k > MAX_DRAFTS:
+        parser.error(f"k must satisfy 2^k <= {MAX_DRAFTS}")
+    load_gemma(args.model)
+    from jev_selector import JEVSelector
+    selector = JEVSelector(k=args.k, branching_factor=BRANCHES, model_name=args.jev_model)
+    selector.backend_name = "jev"
     while True:
         try:
-            prompt = input("\nEnter prompt (or 'exit'): ").strip()
-            if prompt.lower() in ("exit", "quit"):
-                print("Session ended.")
-                break
-            if not prompt:
-                print("Empty prompt skipped.")
-                continue
-
-            compare = input(
-                "Run Gemma-only greedy baseline first? [y/N]: "
-            ).strip().lower() == "y"
-            # Fresh unique paths per prompt, even within the same session.
-            csv_path, baseline_path = new_output_paths()
-
-            # run() builds a fresh context/output/history on each invocation.
-            # Gemma resets its KV state in make_drafts()/greedy_baseline(),
-            # but model weights and the Jev agent remain resident.
-            if compare:
-                greedy_baseline(prompt, baseline_path)
-            run(prompt, k, selector, csv_path)
-
-        except EOFError:
-            print("\nSession ended.")
+            prompt = input("\nEnter prompt (or exit): ").strip()
+        except (EOFError, KeyboardInterrupt):
             break
-        except KeyboardInterrupt:
-            print("\nPrompt interrupted. Type 'exit' to quit.")
+        if prompt.lower() in ("exit", "quit"):
+            break
+        if not prompt:
             continue
+        csv_path, baseline_path = new_output_paths()
+        greedy_baseline(prompt, baseline_path, max_tokens=args.max_tokens)
+        run(prompt, args.k, selector, csv_path, max_tokens=args.max_tokens)
 
 
 if __name__ == "__main__":
