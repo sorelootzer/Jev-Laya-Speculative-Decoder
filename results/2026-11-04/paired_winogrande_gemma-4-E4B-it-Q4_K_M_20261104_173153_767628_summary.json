@@ -1,0 +1,58 @@
+{
+  "dataset": "winogrande",
+  "split": "validation",
+  "seed": 42,
+  "model_path": "C:\\Users\\lootz\\Documents\\Speculative Decoder\\Models\\Gemma4\\gemma-4-E4B-it-Q4_K_M.gguf",
+  "jev_model": "jev-latest",
+  "k": 2,
+  "max_tokens": 16,
+  "count": 20,
+  "errors": 0,
+  "stats": {
+    "gemma": {
+      "correct": 15,
+      "wrong": 5,
+      "invalid": 0,
+      "accuracy_strict": 0.75,
+      "mean_seconds": 4.170745414984412
+    },
+    "gemma_jev": {
+      "correct": 19,
+      "wrong": 1,
+      "invalid": 0,
+      "accuracy_strict": 0.95,
+      "mean_seconds": 6.410175770008936
+    }
+  },
+  "accuracy_delta_pp": 19.999999999999996,
+  "transitions": {
+    "both_correct": 14,
+    "wrong_to_correct": 5,
+    "correct_to_wrong": 1
+  },
+  "jev_participation_questions": 20,
+  "jev_total_calls": 20,
+  "jev_total_overrides": 6,
+  "final_answer_changes": 6,
+  "confusion_matrices": {
+    "gemma": {
+      "pred_A_gold_A": 10,
+      "pred_A_gold_B": 1,
+      "pred_B_gold_A": 4,
+      "pred_B_gold_B": 5
+    },
+    "gemma_jev": {
+      "pred_A_gold_A": 14,
+      "pred_A_gold_B": 1,
+      "pred_B_gold_A": 0,
+      "pred_B_gold_B": 5
+    }
+  },
+  "by_category": {
+    "overall": {
+      "n": 20,
+      "gemma_correct": 15,
+      "gemma_jev_correct": 19
+    }
+  }
+}

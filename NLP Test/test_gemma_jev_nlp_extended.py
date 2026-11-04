@@ -186,7 +186,12 @@ def summarize(rows, args):
             "k": args.k, "max_tokens": args.max_tokens, "count": len(rows),
             "errors": len(rows)-len(valid), "stats": stats,
             "accuracy_delta_pp": 100*(stats["gemma_jev"]["accuracy_strict"]-stats["gemma"]["accuracy_strict"]) if rows else None,
-            "transitions": dict(transitions), "confusion_matrices": confusion,
+            "transitions": dict(transitions),
+            "jev_participation_questions": sum(bool(r.get("jev_decisions", 0)) for r in valid),
+            "jev_total_calls": sum(r.get("jev_decisions", 0) for r in valid),
+            "jev_total_overrides": sum(r.get("jev_overrides", 0) for r in valid),
+            "final_answer_changes": sum(r.get("final_answer_changed", False) for r in valid),
+            "confusion_matrices": confusion,
             "by_category": dict(categories)}
 
 
@@ -203,7 +208,8 @@ def run_benchmark(args, examples, decoder, selector):
                "options": json.dumps(dict(zip("AB", ex["options"])), ensure_ascii=False), "error": ""}
         try:
             baseline = decoder.greedy_baseline(prompt, max_tokens=args.max_tokens)
-            guided = decoder.run(prompt, args.k, selector, max_tokens=args.max_tokens, verbose=False)
+            guided = decoder.run(prompt, args.k, selector, max_tokens=args.max_tokens, verbose=False,
+                                 force_first_jev=not args.no_force_first_jev)
             for arm, data in (("gemma", baseline), ("gemma_jev", guided)):
                 choice = parse_choice(data["response"])
                 row.update({arm+"_response": data["response"], arm+"_choice": choice,
@@ -222,7 +228,11 @@ def run_benchmark(args, examples, decoder, selector):
                 row["transition"] = "both_wrong"
             else:
                 row["transition"] = "invalid_involved"
-            row["jev_decisions"] = len(guided["jev_selections"])
+            row["jev_decisions"] = guided["jev_calls"]
+            row["jev_overrides"] = guided["jev_overrides"]
+            row["jev_bypassed"] = guided["jev_bypassed"]
+            row["jev_bypass_reasons"] = json.dumps(guided["jev_bypass_reasons"])
+            row["final_answer_changed"] = row["gemma_choice"] != row["gemma_jev_choice"]
             row["jev_seconds"] = guided["jev_seconds"]
             row["jev_selection_details"] = json.dumps([
                 {"selected_name": item.get("selected_name"),
@@ -286,7 +296,8 @@ def main():
     parser.add_argument("--split", default="validation")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--question-id", type=int)
-    parser.add_argument("--k", type=int, default=2)
+    parser.add_argument("--k", type=int, default=3)
+    parser.add_argument("--no-force-first-jev", action="store_true")
     parser.add_argument("--model", default=str(DEFAULT_MODEL))
     parser.add_argument("--jev-model", default="jev-latest")
     parser.add_argument("--max-tokens", type=int, default=16)

@@ -23,6 +23,7 @@ class JEVSelector:
         self.expected_draft_count = branching_factor ** k
         self.model_name = model_name
         self.timeout = timeout
+        self.backend_name = "jev"
         # Prompt once per process; retain only in memory, never in results.
         self._api_key = api_key if api_key is not None else getpass("Enter JEV API key: ").strip()
         if not self._api_key:

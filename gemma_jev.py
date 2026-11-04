@@ -27,7 +27,8 @@ def new_output_paths():
             day_dir / f"gemma_greedy_baseline_{stamp}.txt")
 N_CTX = 2048
 BRANCHES = 2
-DEFAULT_K = 2
+DEFAULT_K = 3
+FORCE_FIRST_JEV_DECISION = True
 MAX_DRAFTS = 24  # JEV choice API supports at most 24 options
 MAX_OUTPUT_TOKENS = 64
 
@@ -168,7 +169,7 @@ def probe_greedy_stop(context):
     return None
 
 
-def make_drafts(context, k):
+def make_drafts(context, k, allow_preemptive_stop=True):
     start = time.perf_counter()
     llm.reset()
     llm.eval(context)
@@ -178,9 +179,12 @@ def make_drafts(context, k):
     root_eot_p = float(root_probs[EOT_ID])
     root_top = top_tokens(logits)[0]
     # Check the root EOS/EOT distribution BEFORE expanding any speculative tree.
+    # A benchmark may defer probability-based early stopping for its first
+    # eligible selector decision; actual EOS/EOT leaves still terminate.
     # This is an experimental override, distinct from normal EOS detection.
-    if ((EOS_THRESHOLD is not None and root_eos_p >= EOS_THRESHOLD) or
-            (EOT_THRESHOLD is not None and root_eot_p >= EOT_THRESHOLD)):
+    if ((allow_preemptive_stop or root_top["id"] in STOP_IDS) and
+            ((EOS_THRESHOLD is not None and root_eos_p >= EOS_THRESHOLD) or
+            (EOT_THRESHOLD is not None and root_eot_p >= EOT_THRESHOLD))):
         stop_name = ("end_turn_threshold" if EOT_THRESHOLD is not None and
                      root_eot_p >= EOT_THRESHOLD else "eos_threshold")
         return [], {
@@ -294,7 +298,8 @@ def completion_candidate(drafts, output, output_format):
     return None
 
 
-def run(prompt, k, selector, csv_path=None, max_tokens=None, verbose=True):
+def run(prompt, k, selector, csv_path=None, max_tokens=None, verbose=True,
+        force_first_jev=FORCE_FIRST_JEV_DECISION):
     max_tokens = MAX_OUTPUT_TOKENS if max_tokens is None else max_tokens
     if max_tokens < k:
         raise ValueError("max_tokens must be >= k")
@@ -308,20 +313,24 @@ def run(prompt, k, selector, csv_path=None, max_tokens=None, verbose=True):
     gemma_time = laya_time = 0.0
     candidate_evaluations = {}
     overrides = 0
+    jev_overrides = 0
+    bypass_reasons = []
     reason = None
     iteration = 0
     if ENABLE_COMPLETION_CONTROL and response_is_complete(decode(output), output_format):
         reason = "format_complete"
     while reason is None and len(context)+k <= N_CTX and len(output)+k <= max_tokens:
         iteration += 1
-        drafts, metrics = make_drafts(context, k)
+        drafts, metrics = make_drafts(
+            context, k, allow_preemptive_stop=not (force_first_jev and not selection_results))
         gemma_time += metrics["total_seconds"]
         if metrics.get("preemptive_stop"):
             reason = metrics["preemptive_stop"]
             overrides += 1
+            bypass_reasons.append(reason)
             print(f"Iteration {iteration}: {reason}; "
                   f"EOS P={metrics['root_eos_probability']:.4f}, "
-                  f"EOT P={metrics['root_eot_probability']:.4f}; stopping before Laya.")
+                  f"EOT P={metrics['root_eot_probability']:.4f}; stopping before JEV.")
             rows.append({
                 "iteration": iteration, "k": k, "draft_name": "", "draft_text": "",
                 "gemma_probability": None, "terminal": True,
@@ -351,8 +360,18 @@ def run(prompt, k, selector, csv_path=None, max_tokens=None, verbose=True):
         eos_p = metrics["root_eos_probability"]
         eot_p = metrics["root_eot_probability"]
         top = metrics["root_top"]
-        # A verified high-probability turn closure takes precedence over Laya.
-        if (CONTROL_STOP_THRESHOLD is not None
+        semantic = [d for d in drafts if not control_draft(output, d)]
+        # In benchmark mode, the first eligible tree must reach JEV before
+        # optional Gemma control/completion overrides. Real EOS/EOT remains valid.
+        first_eligible = bool(force_first_jev and not selection_results and len(semantic) >= 2)
+        if not semantic:
+            bypass_reasons.append("no_semantic_candidates")
+        elif len(semantic) < 2:
+            bypass_reasons.append("fewer_than_two_semantic_candidates")
+        # A verified high-probability turn closure takes precedence only
+        # after the first eligible JEV evaluation.
+
+        if (not first_eligible and CONTROL_STOP_THRESHOLD is not None
                 and top["probability"] >= CONTROL_STOP_THRESHOLD
                 and (top["id"] in STOP_IDS or any(
                     seq and top["id"] == seq[0] for _, seq in MARKERS
@@ -362,17 +381,17 @@ def run(prompt, k, selector, csv_path=None, max_tokens=None, verbose=True):
                 reason = "verified_greedy_" + probed
                 mode = "gemma_control_stop"
                 overrides += 1
-        # A complete terminal answer from Gemma may close a concise response
-        # without giving Laya another opportunity to append an explanation.
-        completion = completion_candidate(drafts, output, output_format) if reason is None else None
+        # After the first eligible JEV selection, normal completion controls apply.
+        completion = (completion_candidate(drafts, output, output_format)
+                      if reason is None and not first_eligible else None)
         if completion is not None:
             selected = completion
             mode = "completion_override"
             overrides += 1
             reason = commit(selected, context, output) or "completion_override"
         elif reason is None:
-            semantic = [d for d in drafts if not control_draft(output, d)]
-            if semantic:
+            if len(semantic) >= 2:
+                gemma_best = max(semantic, key=lambda d: d["joint_probability"])
                 selection = selector.select(
                     user_prompt=prompt, assistant_response=decode(output), drafts=semantic
                 )
@@ -381,6 +400,8 @@ def run(prompt, k, selector, csv_path=None, max_tokens=None, verbose=True):
                 candidate_evaluations = selection["candidate_evaluations"]
                 raw_laya_result = selection["raw_result"]
                 selection_results.append(selection)
+                if selected["name"] != gemma_best["name"]:
+                    jev_overrides += 1
                 mode = "jev_filtered"  # Shared label for existing CSV readers
                 laya_time += laya.get("decision_seconds", 0.0)
                 reason = commit(selected, context, output)
@@ -392,9 +413,10 @@ def run(prompt, k, selector, csv_path=None, max_tokens=None, verbose=True):
             else:
                 # Do not append '<' or malformed protocol fragments merely
                 # because all semantic candidates have been filtered out.
-                reason = "no_semantic_drafts_control_blocked"
+                reason = "insufficient_semantic_drafts"
                 mode = "control_blocked"
                 overrides += 1
+                bypass_reasons.append(reason)
         print(f"Iteration {iteration}: {mode}, EOS P={eos_p:.4f}, EOT P={eot_p:.4f}, "
               f"selected={selected['name'] if selected else 'STOP'}, "
               f"text={selected['text']!r}" if selected else
@@ -434,6 +456,9 @@ def run(prompt, k, selector, csv_path=None, max_tokens=None, verbose=True):
                 "completion_candidate": selected["name"] if mode == "completion_override" else "",
                 "completion_probability": selected["joint_probability"] if mode == "completion_override" else None,
                 "selector_backend": selector.backend_name,
+                "jev_called": mode == "jev_filtered",
+                "jev_override": mode == "jev_filtered" and selected is not None and selected["name"] != gemma_best["name"],
+                "jev_bypass_reason": "" if mode == "jev_filtered" else mode,
                 "selector_model_version": laya.get("model_version", selector.model_name),
             })
         if reason:
@@ -463,46 +488,58 @@ def run(prompt, k, selector, csv_path=None, max_tokens=None, verbose=True):
     return {"response": response, "rows": rows,
             "jev_selections": selection_results, "termination_reason": reason,
             "output_tokens": len(output), "elapsed_seconds": elapsed,
-            "jev_seconds": laya_time, "gemma_seconds": gemma_time}
+            "jev_seconds": laya_time, "gemma_seconds": gemma_time,
+            "jev_calls": len(selection_results), "jev_overrides": jev_overrides,
+            "jev_bypassed": len(selection_results) == 0,
+            "jev_bypass_reasons": bypass_reasons or ([reason] if not selection_results else []),
+            "force_first_jev": force_first_jev}
 
 
 
 def greedy_baseline(prompt, baseline_path=None, max_tokens=None):
-    """Run Gemma alone with identical prompt framing and context budget."""
+    """Greedy Gemma with a persistent llama.cpp KV cache for each prompt."""
     max_tokens = MAX_OUTPUT_TOKENS if max_tokens is None else max_tokens
+    if max_tokens < 1:
+        raise ValueError("max_tokens must be positive")
     context = prompt_tokens(prompt)
     generated = []
     start = time.perf_counter()
     reason = "context_limit"
-    while len(context) < N_CTX and len(generated) < max_tokens:
+    if len(context) < N_CTX:
         llm.reset()
-        llm.eval(context)
-        logits = llm.scores[llm.n_tokens - 1]
-        token = int(np.argmax(logits))
-        if token in STOP_IDS:
-            reason = stop_reason([token]) or "stop_token"
-            break
-        generated.append(token)
-        context.append(token)
-    if reason == "context_limit" and len(generated) >= max_tokens:
-        reason = "max_tokens"
+        llm.eval(context)  # Evaluate prompt only once.
+        while len(generated) < max_tokens:
+            token = int(np.argmax(llm.scores[llm.n_tokens - 1]))
+            if token in STOP_IDS:
+                reason = stop_reason([token]) or "stop_token"
+                break
+            generated.append(token)
+            if len(context) + len(generated) >= N_CTX:
+                reason = "context_limit"
+                break
+            # Append only the new token; do not reset/replay the prompt.
+            llm.eval([token])
+        else:
+            reason = "max_tokens"
     result = decode(generated)
     duration = time.perf_counter() - start
     if baseline_path is not None:
         baseline_path.write_text(
-        f"Prompt: {prompt}\nAnswer: {result}\nStop reason: {reason}\n"
-        f"Tokens: {len(generated)}\nSeconds: {duration:.3f}\n",
-        encoding="utf-8"
-    )
+            f"Prompt: {prompt}\nAnswer: {result}\nStop reason: {reason}\n"
+            f"Tokens: {len(generated)}\nSeconds: {duration:.3f}\n",
+            encoding="utf-8")
     print(f"Gemma-only baseline: {result!r} ({reason}, {duration:.2f}s)")
     return {"response": result, "termination_reason": reason,
             "output_tokens": len(generated), "elapsed_seconds": duration}
+
 
 def main():
     parser = argparse.ArgumentParser(description="Gemma-JEV speculative decoder")
     parser.add_argument("--model", default=str(MODEL_PATH), help="Gemma GGUF path")
     parser.add_argument("--jev-model", default="jev-latest")
     parser.add_argument("--k", type=int, default=DEFAULT_K)
+    parser.add_argument("--no-force-first-jev", action="store_true",
+                        help="Disable first eligible tree JEV evaluation")
     parser.add_argument("--max-tokens", type=int, default=MAX_OUTPUT_TOKENS)
     args = parser.parse_args()
     if args.k < 1 or BRANCHES ** args.k > MAX_DRAFTS:
@@ -522,7 +559,8 @@ def main():
             continue
         csv_path, baseline_path = new_output_paths()
         greedy_baseline(prompt, baseline_path, max_tokens=args.max_tokens)
-        run(prompt, args.k, selector, csv_path, max_tokens=args.max_tokens)
+        run(prompt, args.k, selector, csv_path, max_tokens=args.max_tokens,
+            force_first_jev=not args.no_force_first_jev)
 
 
 if __name__ == "__main__":
