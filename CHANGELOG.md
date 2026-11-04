@@ -4,16 +4,43 @@ Chronological development log for the Gemma–JEV Speculative Decoder (formerly 
 
 ## TODO / Next Steps
 
-1. **Verify JEV participation in the combined decoder (highest overall priority).** Record JEV calls, candidate counts, accepted branch, disagreements with Gemma, overrides, and explicit reasons when JEV is bypassed. Do not count a Gemma-only termination as a JEV-assisted result.
-2. **KV-cache and speculative-tree optimization (highest performance priority).** Preserve the accepted-prefix KV state across decoding iterations, reuse intermediate tree-node states, and investigate batched branch evaluation. Existing saved-root reuse is only partial optimization; quantify memory-copy overhead as well as token evaluations.
-3. **Controlled three-arm evaluation.** Compare Gemma greedy, Gemma-tree highest-joint-probability, and Gemma–JEV on identical prompts, question IDs, output budgets, completion rules, model versions, and hardware. Report accuracy, beneficial/harmful overrides, token counts, latency, and throughput.
-4. **Validate termination and completion control.** Restore and test production-safe EOS/EOT and completion behaviour in the JEV path; distinguish correct completion, format-based stopping, context limits, and premature termination.
-5. **Reproducibility and E4B/E12B comparison.** Pin the JEV model version instead of relying solely on `jev-latest`; log GGUF identity, `k`, branching factor, decoding settings, API/model version, and dataset splits. Compare E4B and E12B using matched conditions.
-6. **Long-context and regression testing.** Handle `n_ctx` exhaustion; test `k=2`/`k=3`, pruned terminal leaves, control-token filtering, selector failures, dataset adapters, and output logging.
+1. **Controlled three-arm evaluation.** Compare Gemma-only cached greedy decoding, Gemma-tree highest-joint-probability selection, and Gemma–JEV under identical prompts, seeds, question IDs, output budgets, completion rules, and hardware. Record quality, latency, token throughput, and beneficial versus harmful answer changes.
+2. **Termination and completion validation.** Verify Gemma 4 EOS/EOT handling, terminal draft pruning, context-budget behavior, and clean natural-language response completion across `k=2` and `k=3`.
+3. **E4B/E12B reproducibility.** Compare model sizes with matched quantization and benchmark configurations where possible; record the exact GGUF, JEV model identifier, selector settings, and dataset versions.
+4. **JEV-guided output quality.** Expand paired NLP and long-form evaluation; compare correctness, semantic coherence, factual grounding, and error propagation across multiple examples.
+5. **Regression and benchmark coverage.** Exercise different candidate depths, selector failures, dataset loaders, timestamped results, and reproducible analysis of saved experiment artifacts.
 
-**Scope decision:** Laya is no longer part of the active development or evaluation plan. Retain its prior entries below solely as historical development records; do not allocate new TODO work to it.
+**Scope:** Gemma–JEV is the active development direction. Earlier Laya work remains documented as project history.
 
 ---
+
+## 2026-11-04 — JEV-Guided Generation and Python KV-Cache Refinement
+
+### Selection and NLP evaluation
+
+- Added local paired experiments that explicitly exercised JEV candidate selection, with draft-selection counts and answer-change tracking.
+- In a 20-question WinoGrande local run, Gemma-only scored 15/20 (75%) and Gemma–JEV scored 19/20 (95%); JEV was called 20 times, with six recorded overrides and six final-answer changes. This is a pilot sample.
+- In a 20-question Story Cloze local run, both paths scored 20/20; JEV was called 20 times and made three draft overrides without changing the final answer.
+- Developed local long-form evaluation using SAMSum, CNN/DailyMail, and ELI5-style explanatory tasks, with reference-based ROUGE scoring and complete response logging. Availability of individual dataset loaders depends on the tested Hugging Face dataset configuration.
+
+### Python KV-cache optimization
+
+- Implemented an experimental Python-level accepted-prefix KV cache and tree-node state reuse using `llama-cpp-python` state APIs.
+- Refined tree traversal to avoid unnecessary state restorations while retaining speculative draft evaluation.
+- On one SAMSum example at `k=3`, the initial Gemma–JEV decoder took 267.76 s for 47 output tokens; the first Python KV variant took 143.61 s for 47 tokens; the refined variant took 83.88 s for 48 tokens.
+- The refined run reduced state loads from 125 to 63 compared with the first Python KV variant, and measured state-load time fell from 80.92 s to 35.99 s.
+- The runs recorded 16 JEV calls; selector overrides differed between runs. ROUGE metrics were close but not identical, so the timing comparison should not be treated as proof of identical generated text.
+
+### Native-cache investigation
+
+- Prototyped native llama.cpp KV sequence copying and batched sequence evaluation against `llama-cpp-python 0.3.36`.
+- Native `seq_cp()` triggered a C++ full-buffer assertion on the tested Gemma 4 configuration. Native shared-prefix membership produced a memory-slot allocation error; single-sequence incremental native evaluation passed the diagnostic.
+- Continued practical optimization using the working Python-level cache approach rather than making native batching a prerequisite for evaluation.
+
+### Repository and evidence alignment
+
+- These benchmark and cache results originate from local development files and user-provided CSV/JSON artifacts. Do not infer that every optimized decoder or benchmark script is present in the remote `main` branch.
+- The active TODO now focuses on controlled evaluation, output quality, termination, model-size comparisons, and regression coverage. JEV participation instrumentation and Python KV-cache implementation are documented above as completed development milestones rather than active TODO headings.
 
 ## 2026-11-04 — Paired NLP Pilot and Evaluation Validity
 
