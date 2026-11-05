@@ -1,0 +1,35 @@
+﻿ESP3201 LIVE SPECULATIVE DECODING
+
+Prompt: What is 12 plus 8? Answer only with the number.
+Draft length K: 2
+
+12B-ONLY ANSWER
+20
+
+SPECULATIVE ANSWER
+20
+
+Output check: MATCH
+12B-only: 2.1082 s; 2 tokens; 0.95 tok/s; stop=eog; error=none
+Speculative: 3.1428 s; 2 tokens; 0.64 tok/s; stop=eog; error=none
+speedup ratio: 0.671x
+Speculative decoding was slower.
+Draft acceptance: 25.0%
+
+DRAFT / VERIFY TRACE
+Round 1: proposed=2, accepted=0, rejected suffix=2
+  Proposed: 'The user'
+  Emitted:  '2'
+Round 2: proposed=2, accepted=1, rejected suffix=1
+  Proposed: '0<channel|>'
+  Emitted:  '0'
+
+TIMING NOTES
+Both models remain loaded during both methods.
+The same target uses logits_all=True in both methods.
+Timers include reset, prefill and generation.
+Model loading, formatting and report writing are excluded.
+Baseline runs first; this is one demonstration trial.
+Acceptance includes accepted end-of-generation tokens.
+Full GPU residency and VRAM usage are not measured.
+A token match is not an answer-quality assessment.

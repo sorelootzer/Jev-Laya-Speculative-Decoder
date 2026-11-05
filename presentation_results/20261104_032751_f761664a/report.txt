@@ -1,0 +1,35 @@
+﻿ESP3201 LIVE SPECULATIVE DECODING
+
+Prompt: What is the capital of France? Answer briefly.
+Draft length K: 2
+
+12B-ONLY ANSWER
+Paris
+
+SPECULATIVE ANSWER
+Paris
+
+Output check: MATCH
+12B-only: 1.9117 s; 1 tokens; 0.52 tok/s; stop=eog; error=none
+Speculative: 2.9532 s; 1 tokens; 0.34 tok/s; stop=eog; error=none
+speedup ratio: 0.647x
+Speculative decoding was slower.
+Draft acceptance: 0.0%
+
+DRAFT / VERIFY TRACE
+Round 1: proposed=2, accepted=0, rejected suffix=2
+  Proposed: 'The user'
+  Emitted:  'Paris'
+Round 2: proposed=2, accepted=0, rejected suffix=2
+  Proposed: '<channel|>'
+  Emitted:  ''
+
+TIMING NOTES
+Both models remain loaded during both methods.
+The same target uses logits_all=True in both methods.
+Timers include reset, prefill and generation.
+Model loading, formatting and report writing are excluded.
+Baseline runs first; this is one demonstration trial.
+Acceptance includes accepted end-of-generation tokens.
+Full GPU residency and VRAM usage are not measured.
+A token match is not an answer-quality assessment.

@@ -1,0 +1,113 @@
+{
+  "prompt": "What is 12 plus 8? Answer only with the number.",
+  "k": 2,
+  "settings": {
+    "n_ctx": 1024,
+    "n_batch": 256,
+    "threads": 8,
+    "gpu_layers": 0,
+    "verbose": false
+  },
+  "max_tokens": 32,
+  "models": {
+    "draft": "C:\\Users\\e1356\\Desktop\\ESP3201A\\AccelerateLM\\Model\\gemma-4-E4B-it-Q4_K_M.gguf",
+    "target": "C:\\Users\\e1356\\Desktop\\ESP3201A\\AccelerateLM\\Model\\gemma-4-12b-it-Q4_K_M.gguf"
+  },
+  "compatibility": {
+    "small_bos": 2,
+    "target_bos": 2,
+    "small_eos": 106,
+    "target_eos": 1,
+    "vocabulary_size": 262144,
+    "stop_token_ids": [
+      1,
+      50,
+      106
+    ],
+    "differing_default_eos_allowed": true,
+    "vocabulary_checked": true
+  },
+  "formatted_prompt": "<bos><|turn>user\nWhat is 12 plus 8? Answer only with the number.<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+  "template_sha256": "ae53464bf3be25802b3a5b37def7fd89667067d7577049b3b2d74c4d8de4c6d4",
+  "baseline": {
+    "output_ids": [
+      236778,
+      236771
+    ],
+    "stop_reason": "eog",
+    "error": "",
+    "response_seconds": 2.1081731999875046,
+    "ttft_seconds": 1.7162134000100195,
+    "output_tokens": 2,
+    "tokens_per_second": 0.9486886561369123,
+    "draft_seconds": 0.0,
+    "target_seconds": 2.108141999982763,
+    "proposed_tokens": 0,
+    "accepted_tokens": 0,
+    "acceptance_rate": null,
+    "events": []
+  },
+  "speculative": {
+    "output_ids": [
+      236778,
+      236771
+    ],
+    "stop_reason": "eog",
+    "error": "",
+    "response_seconds": 3.142777999979444,
+    "ttft_seconds": 2.53827530000126,
+    "output_tokens": 2,
+    "tokens_per_second": 0.6363796615647308,
+    "draft_seconds": 0.7913700000499375,
+    "target_seconds": 2.351374800025951,
+    "proposed_tokens": 4,
+    "accepted_tokens": 1,
+    "acceptance_rate": 0.25,
+    "events": [
+      {
+        "iteration": 1,
+        "context_tokens": 28,
+        "proposed": 2,
+        "accepted": 0,
+        "rejected_suffix": 2,
+        "draft_seconds": 0.6252255000290461,
+        "verification_seconds": 0.24954230000730604,
+        "proposal_ids": [
+          818,
+          2430
+        ],
+        "committed_ids": [
+          236778
+        ],
+        "proposed_text": "The user",
+        "emitted_text": "2"
+      },
+      {
+        "iteration": 2,
+        "context_tokens": 29,
+        "proposed": 2,
+        "accepted": 1,
+        "rejected_suffix": 1,
+        "draft_seconds": 0.16614450002089143,
+        "verification_seconds": 0.24410110001917928,
+        "proposal_ids": [
+          236771,
+          101
+        ],
+        "committed_ids": [
+          236771,
+          106
+        ],
+        "proposed_text": "0<channel|>",
+        "emitted_text": "0"
+      }
+    ]
+  },
+  "output_check": "MATCH",
+  "latency_ratio": 0.6707992737639419,
+  "cache_fallbacks": {
+    "baseline_target": 0,
+    "speculative_target": 0,
+    "draft": 0
+  }
+}
