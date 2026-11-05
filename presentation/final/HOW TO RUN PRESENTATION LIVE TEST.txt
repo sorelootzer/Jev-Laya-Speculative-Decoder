@@ -1,0 +1,55 @@
+ACCELERATELM — RUNNING THE LIVE DEMONSTRATION ON WINDOWS
+
+PREREQUISITES
+These instructions assume:
+- Python dependencies are installed in .venv-cpu.
+- The model files are downloaded.
+- MODEL_DIR in presentation_demo.py points to their location.
+- The script is configured for CPU inference: gpu_layers=0.
+- presentation_demo.py and benchmark_common.py are together.
+-----------------------------------------------------------------
+
+1: 
+Find the folder containing:
+presentation_demo.py
+benchmark_common.py
+.venv-cpu
+
+2:
+Open that folder, click the address bar, type:cmd
+[This runs CMD in that folder]
+
+3: 
+In CMD, run:
+dir /b presentation_demo.py
+dir /b ".venv-cpu\Scripts\python.exe
+
+4: 
+Start the demo with:
+".venv-cpu\Scripts\python.exe" presentation_demo.py --max-tokens 32
+
+[Change max-tokens for longer answers in the event of cutoff]
+
+5:
+Enter your prompt and desired k value
+
+6:
+Each prompt creates a new folder under:
+
+(Current Folder)\presentation_results\
+
+The folder contains:
+    report.txt
+    summary.csv
+    results.json
+
+The TXT report should open automatically.
+If it does not, open report.txt manually in File Explorer.
+
+7: 
+Enter another prompt to continue with the models already loaded.
+
+Type:
+    exit
+
+to finish and release the models.
