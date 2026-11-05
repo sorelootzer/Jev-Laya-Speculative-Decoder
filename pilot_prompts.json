@@ -1,0 +1,5 @@
+[
+  {"id":"fact_01","category":"factual","prompt":"What is the capital of France? Answer in one sentence.","reference":"Paris"},
+  {"id":"math_01","category":"arithmetic","prompt":"A box contains 12 red balls and 8 blue balls. How many balls are there altogether? Answer in one sentence.","reference":"20 balls"},
+  {"id":"extract_01","category":"extraction","prompt":"From this sentence, return only the appointment time: The appointment is on Monday at 14:30 in Room 5.","reference":"14:30"}
+]
