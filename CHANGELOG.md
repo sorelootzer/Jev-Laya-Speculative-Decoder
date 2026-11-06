@@ -1,16 +1,36 @@
 # Changelog
 
-Chronological development log for the Gemma–JEV Speculative Decoder (formerly Gemma–Laya).
+Chronological development log for the ESP3201A Gemma–JEV and E4B → 12B decoding experiments.
 
-## TODO / Next Steps
+## Final submission — 2026-11-06
 
-1. **Controlled three-arm evaluation.** Compare Gemma-only cached greedy decoding, Gemma-tree highest-joint-probability selection, and Gemma–JEV under identical prompts, seeds, question IDs, output budgets, completion rules, and hardware. Record quality, latency, token throughput, and beneficial versus harmful answer changes.
-2. **Termination and completion validation.** Verify Gemma 4 EOS/EOT handling, terminal draft pruning, context-budget behavior, and clean natural-language response completion across `k=2` and `k=3`.
-3. **E4B/E12B reproducibility.** Compare model sizes with matched quantization and benchmark configurations where possible; record the exact GGUF, JEV model identifier, selector settings, and dataset versions.
-4. **JEV-guided output quality.** Expand paired NLP and long-form evaluation; compare correctness, semantic coherence, factual grounding, and error propagation across multiple examples.
-5. **Regression and benchmark coverage.** Exercise different candidate depths, selector failures, dataset loaders, timestamped results, and reproducible analysis of saved experiment artifacts.
+The repository now contains two separate experimental systems: Gemma–JEV semantic candidate selection with refined Python KV-state reuse, and E4B → 12B draft–target verification. The original Gemma–Laya experiments remain in the history.
 
-**Scope:** Gemma–JEV is the active development direction. Earlier Laya work remains documented as project history.
+### Completed work
+
+- Built and instrumented Gemma token-tree generation, remote JEV selection and original-token-ID commitment.
+- Implemented Python KV-cache reuse and refined traversal, reducing a single SAMSum combined-decoder run from 267.76 s to 143.61 s and then 83.88 s.
+- Added paired NLP and summarization benchmarks, reference ROUGE metrics and saved experimental artifacts.
+- Built a separate E4B → 12B draft–target pipeline, CPU demo, token acceptance and memory instrumentation.
+- Collected CPU E4B, 12B, K=2/3/4 smoke tests, supplementary RAM runs and final presentation materials.
+
+### Recorded final results
+
+| Experiment | Summary |
+| --- | --- |
+| WinoGrande (20) | Gemma 15/20; Gemma–JEV 19/20; 20 JEV calls |
+| Story Cloze (20) | Both 20/20; 20 JEV calls |
+| SAMSum (19 completed / 20 attempted) | Gemma ROUGE-1/2/L 0.3275/0.1062/0.2433; Gemma–JEV 0.3698/0.1495/0.2846; mean latency 18.26 s vs 82.15 s |
+| CNN/DailyMail (20 completed) | Gemma ROUGE-1/2/L 0.3679/0.1332/0.2287; Gemma–JEV 0.3676/0.1153/0.2195; mean latency 19.54 s vs 111.50 s; 5 inputs truncated |
+| CPU summary smoke (4 prompts) | E4B 13.57 s, 12B 36.57 s, E4B → 12B K2 49.30 s, K3 51.28 s, K4 51.88 s mean; acceptance 59.7%, 50.6%, 43.0% |
+
+The JEV results and draft–target results use different architectures and protocols. The CPU smoke results do not demonstrate a target-model speedup. The refined KV result is a single-example engineering comparison.
+
+### Final documentation
+
+- Replaced the outdated Laya-oriented README with current architecture, setup, commands and evidence links.
+- Updated the AGENTS review guide to navigate both experimental pipelines and their saved results.
+- Preserved the historical changelog below.
 
 ---
 
