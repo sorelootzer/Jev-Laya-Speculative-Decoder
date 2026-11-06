@@ -1,58 +1,61 @@
-# Repository Guide for Code-Review Agents
+# AGENTS.md — ESP3201A Final Repository Guide
 
-## Purpose and scope
+This file helps independent academic reviewers navigate the submitted code and evidence. Begin with `README.md` for the current overview and `CHANGELOG.md` for the chronological development record. Inspect the actual source and result artifacts when evaluating a claim. Review should be read-only unless the repository owner explicitly requests changes.
 
-This repository is an ESP3201A research prototype investigating **Gemma-guided candidate generation with JEV selection**. Gemma 4 E4B generates alternative next-token continuations; a JEV choice service evaluates eligible drafts, and the selected draft's original token IDs are committed to the Gemma context. The project studies changes in answer quality and decoding cost under this selection architecture.
+## Two experimental systems
 
-This document is a navigation aid for independent review. Treat source code, reproducible commands, and saved experiment artifacts as primary evidence. Do not treat this document as a substitute for inspecting them.
+**Gemma–JEV semantic candidate selection:** `gemma_jev.py`, `gemma_jev_kv.py`, `gemma_jev_kv_optimized.py` and `jev_selector.py`. Gemma E4B proposes candidate token continuations; remote JEV selects among them, and the decoder commits the original Gemma token IDs. This is semantic candidate reranking rather than target-model distribution-preserving verification. `laya_selector.py` records earlier work.
 
-## Where to start
+**E4B → 12B draft–target verification:** `benchmark_common.py`, `small_only.py`, `large_only.py` and `small_large.py`. The E4B draft proposes tokens, and the larger target verifies them. `test_decoding.py`, `diagnose_mismatch.py`, `compare_outputs.py` and `presentation_demo.py` support this separate system.
 
-1. Read `README.md` for the repository's original setup and background; consult `CHANGELOG.md` for subsequent architectural evolution. The README may describe an earlier development stage.
-2. Inspect `gemma_jev.py` for candidate-tree construction, Gemma 4 prompt framing, EOS/EOT handling, draft commitment, and baseline generation.
-3. Inspect `jev_selector.py` for JEV API requests, candidate presentation, selection mapping, and response metadata.
-4. Inspect `nlp_utils.py` for shared NLP dataset adapters, deterministic sampling, label mapping, and result persistence.
-5. Inspect `requirements.txt` and the `results/` directory for environment requirements and recorded experiments.
-6. Inspect other decoder or benchmark variants *if present in the checkout*; their availability and status must be established from actual files, not inferred from historical notes.
+Do not conflate JEV **draft overrides** with target-model **draft-token acceptance**.
 
-## Architectural reading map
+## Suggested inspection order
 
-- **Draft generator:** Gemma GGUF loaded using `llama-cpp-python`, with token logits used to construct a binary speculative tree. Branching factor `b` and draft length `k` determine the candidate count, subject to terminal pruning and selector limits.
-- **Selector:** JEV receives a question derived from the user prompt, current response, and eligible candidate drafts. Its choice is mapped to the existing Gemma draft, retaining token IDs rather than retokenizing selected text.
-- **Commit and continuation:** Accepted token IDs are appended to the generation context. EOS and end-of-turn handling determine when a response finishes.
-- **Measurement:** Per-candidate probabilities, selection metadata, response times, and benchmark outcomes may be recorded as CSV or JSON, depending on the decoder variant.
+1. `README.md` — architecture, setup, exact benchmark commands and results overview.
+2. `gemma_jev_kv_optimized.py` — refined JEV-guided generation, tree traversal, cache-state operations and EOS/EOT handling.
+3. `jev_selector.py` — remote selector authentication, candidate construction and response validation.
+4. `NLP Test/test_gemma_jev_nlp_extended.py` — paired WinoGrande, Story Cloze, RTE and BLiMP evaluation.
+5. `NLP Test/test_gemma_jev_summarization_kv_compare.py` — SAMSum/CNN-DailyMail evaluation, ROUGE and latency.
+6. `benchmark_common.py` and `small_large.py` — separate draft–target decoding and measurement.
+7. `test_decoding.py`, `CPU_SUMMARY_SMOKE.md` and `DRAFT_TARGET_STATUS.md` — verification and CPU experiment context.
+8. `CHANGELOG.md` — historical decisions and milestones.
 
-Read the exact implementation being evaluated to determine its default `k`, output cap, cache policy, and whether JEV can be bypassed. Do not assume all experimental variants share settings.
+## Evidence locations
 
-## Setup and reproducibility
+| Experiment | Source |
+| --- | --- |
+| Paired choice benchmarks | `results/2026-11-04/paired_*_summary.json` |
+| SAMSum 20-attempt JEV run | `results/2026-11-04/paired_samsum_optimized_gemma-4-E4B-it-Q4_K_M_k3_20261104_193107_298853_summary.json` |
+| KV optimization comparison | `results/2026-11-04/paired_samsum_kv_gemma-4-E4B-it-Q4_K_M_k3_20261104_181839_536995_summary.json` and `paired_samsum_optimized_gemma-4-E4B-it-Q4_K_M_k3_20261104_190355_820531_summary.json` |
+| Successful CNN/DailyMail JEV run | `groupmate_cnn_verify_20CNN_DailyMail_Laptop_20Questions_K3/` (CSV and JSON) |
+| Earlier unsuccessful CNN run | `groupmate_cnn_verify20/` |
+| CPU E4B/12B draft–target smoke | `summary_cpu_smoke/`, `summary_smoke_seed42.json` |
+| Additional CPU and RAM data | `cpu_results/`, `ram_table_fill/`, `results_cpu/` |
+| Demo outputs | `presentation_results/`, `presentation/final/` |
+| Other experiments | `GSM8K Test/`, `NLP Test/`, `results/` |
 
-Install dependencies using:
+## Representative reproduction commands
+
+Run from repository root with models and dependencies installed:
 
 ```powershell
 python -m pip install -r requirements.txt
+python ".\NLP Test\test_gemma_jev_nlp_extended.py" --dataset winogrande --count 20 --seed 42 --k 2 --max-tokens 16
+python ".\NLP Test\test_gemma_jev_summarization_kv_compare.py" --dataset samsum --decoder optimized --count 20 --seed 42 --k 3 --max-tokens 256
+python ".\NLP Test\test_gemma_jev_summarization_kv_compare.py" --dataset cnn_dailymail --decoder optimized --count 20 --seed 42 --k 3 --max-tokens 256
+python test_decoding.py
 ```
 
-The Gemma GGUF is not stored in Git. The documented E4B file is `models/Gemma4/gemma-4-E4B-it-Q4_K_M.gguf`; the exact path is configurable in some variants. JEV API access is separately required and should be provided through a secure prompt or environment configuration. Never print, persist, or request disclosure of API keys in review artifacts.
+`requirements_cpu.txt` records a pinned CPU environment, including `llama-cpp-python==0.3.36`. GGUF weights are not committed. JEV runs require private API credentials. Never request, expose or store API keys in review artifacts. `presentation_demo.py` may require machine-specific `MODEL_DIR` configuration.
 
-When reproducing a benchmark, record: Git commit SHA, source script, GGUF filename and quantization, JEV model identifier/version where available, dataset and split, seed, question IDs, `k`, `b`, context size, maximum output tokens, CPU/GPU configuration, and timing methodology. Compare paired runs on identical questions and prompts.
+## Reading the results
 
-## Experimental evidence map
+- WinoGrande: 15/20 Gemma and 19/20 Gemma–JEV; 20 selector calls.
+- Story Cloze: 20/20 for both; 20 selector calls.
+- SAMSum: 19 completed of 20; JEV mean ROUGE-1/2/L 0.3698/0.1495/0.2846 versus Gemma 0.3275/0.1062/0.2433. Mean response times 82.15 s versus 18.26 s.
+- CNN/DailyMail: 20 completed; JEV mean ROUGE-1/2/L 0.3676/0.1153/0.2195 versus Gemma 0.3679/0.1332/0.2287. Mean response times 111.50 s versus 19.54 s. Five inputs truncated.
+- Single-example Python KV optimization: combined-decoder times 267.76 → 143.61 → 83.88 s; state loads reduced from 125 to 63 between the first and refined KV variants.
+- CPU smoke: four prompts (two SAMSum, two CNN/DailyMail), Ryzen 7 8845HS, 32 GB DDR5-5600, Windows 11, eight CPU threads. Mean E4B 13.57 s; 12B 36.57 s; K2 49.30 s; K3 51.28 s; K4 51.88 s.
 
-- **Multiple-choice NLP:** HellaSwag, SST-2, and other benchmark adapters are represented by `nlp_utils.py`. Additional scripts may be maintained outside the tracked repository.
-- **Paired selection experiments:** Historical local WinoGrande and Story Cloze runs compared Gemma-only and Gemma–JEV on 20 questions each. Consult the matching CSV and JSON artifacts before quoting results.
-- **Long-form generation:** Local SAMSum experiments compared full-text summaries using ROUGE metrics and logged JEV participation, override counts, token counts, and latency.
-- **KV optimization:** Development progressed from repeated prompt evaluation to Python-level saved-state reuse and a refined traversal. Experimental native sequence-copy and multi-sequence batching were also investigated. Inspect the exact available variant before attributing a result to repository code.
-
-## Reading performance results
-
-Use **accuracy** for labeled choices and **ROUGE-1/2/L** for reference-based summarization. ROUGE measures text overlap, not automatically factual correctness. Report end-to-end latency, generated tokens, and throughput together; different output lengths affect timing comparisons. For JEV-assisted claims, confirm a positive selector-call count and distinguish a draft override from a final-answer change.
-
-The local SAMSum example discussed during development recorded approximately 267.76 s for the initial combined decoder, 143.61 s with Python KV reuse, and 83.88 s with refined traversal. These are single-example local measurements, not a repository-wide speed benchmark. Use the corresponding saved results for precise attribution.
-
-## Review procedure
-
-Read code and experiment artifacts directly. Follow the actual control flow through candidate generation, selector invocation, token commitment, and termination. Distinguish source-level behavior from benchmark observations, and historical experiments from the current checked-out implementation. Verify reported figures from their CSV/JSON sources and identify the matching model/configuration. Do not modify source, results, or Git history during an assessment unless the repository owner authorizes it.
-
-## Development status
-
-The active research direction is **Gemma–JEV**. Earlier Laya integration is retained in historical files and changelog entries for provenance. The next evaluation work emphasizes matched three-arm comparisons (greedy, tree-only, JEV-guided), completion behavior, E4B/E12B comparisons, and broader long-form datasets.
+ROUGE measures reference overlap, not factuality by itself. Record model filename/quantization, commit, hardware, dataset/split, seed, output/context budget and selector version when interpreting or reproducing runs. The `jev-latest` identifier may change over time. Keep the distinct experimental protocols separate.
